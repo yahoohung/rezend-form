@@ -6,7 +6,8 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      "rezend-form": path.resolve(__dirname, "../src/index.ts")
+      "@form/react": path.resolve(__dirname, "../packages/react/src/index.ts"),
+      "@form/core": path.resolve(__dirname, "../packages/core/src/index.ts")
     }
   },
   server: {

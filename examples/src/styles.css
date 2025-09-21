@@ -50,6 +50,11 @@ form {
   text-transform: capitalize;
 }
 
+.hint {
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
 input {
   border: 1px solid #cbd5f5;
   border-radius: 8px;

@@ -7,8 +7,8 @@ module.exports = {
   moduleFileExtensions: ["ts", "tsx", "js", "jsx"],
   setupFilesAfterEnv: ["<rootDir>/tests/jest.setup.ts"],
   collectCoverageFrom: [
-    "src/**/*.{ts,tsx}",
-    "!src/**/*.d.ts"
+    "packages/**/src/**/*.{ts,tsx}",
+    "!packages/**/src/**/*.d.ts"
   ],
   coverageDirectory: "coverage",
   coverageProvider: "v8",
@@ -21,6 +21,9 @@ module.exports = {
     }
   },
   moduleNameMapper: {
+    "^@form/core$": "<rootDir>/packages/core/src/index.ts",
+    "^@form/react$": "<rootDir>/packages/react/src/index.ts",
+    "^@form/plugins$": "<rootDir>/packages/plugins/src/index.ts",
     "^(\\.{1,2}/.*)\\.js$": "$1"
   }
 };

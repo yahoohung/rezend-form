@@ -1,10 +1,16 @@
 {
-  "extends": "./tsconfig.json",
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
     "types": ["node"],
     "module": "ES2020",
-    "moduleResolution": "Node"
+    "moduleResolution": "Node",
+    "baseUrl": ".",
+    "paths": {
+      "@form/core": ["packages/core/src/index.ts"],
+      "@form/react": ["packages/react/src/index.ts"],
+      "@form/plugins": ["packages/plugins/src/index.ts"]
+    }
   },
-  "include": ["tests/perf/**/*.ts"]
+  "include": ["tests/perf/**/*"]
 }
