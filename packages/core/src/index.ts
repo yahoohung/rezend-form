@@ -167,6 +167,7 @@ interface FieldRecord {
   validator?: Validator;
   initialValue: unknown;
   controlledValue: unknown;
+  uncontrolledValue: unknown;
   touched: boolean;
   dirty: boolean;
   error: string | null;
@@ -468,10 +469,14 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
       const validators = fieldValidators.get(path);
       const record = fields.get(path);
       if (!validators || validators.size === 0 || !record) {
+        if (record && record.error !== null) {
+          record.error = null;
+        }
+        emitEvent("validate", { path, result: { ok: true } });
         return { ok: true };
       }
       const bucket = getValidationBucket(path);
-      const value = record.mode === "controlled" ? record.controlledValue : undefined;
+      const value = record.mode === "controlled" ? record.controlledValue : record.uncontrolledValue;
       const tasks = Array.from(validators);
       let syncOk = true;
       let syncMessage: string | null = null;
@@ -553,6 +558,7 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
             mode,
             initialValue: nextInitialValue,
             controlledValue: nextInitialValue,
+            uncontrolledValue: nextInitialValue,
             touched: false,
             dirty: false,
             error: null,
@@ -572,10 +578,16 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
           if (record.mode === "controlled") {
             record.controlledValue = nextInitialValue;
           }
+          record.uncontrolledValue = nextInitialValue;
+          record.dirty = false;
         }
 
         if (record.mode === "controlled" && record.controlledValue === undefined) {
           record.controlledValue = record.initialValue;
+        }
+
+        if (record.mode === "uncontrolled" && record.uncontrolledValue === undefined) {
+          record.uncontrolledValue = record.initialValue;
         }
 
         if (opts.meta !== undefined) {
@@ -672,6 +684,9 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
         if (record.mode === "uncontrolled") {
           const value = getDomValue(path);
           const nextDirty = !Object.is(value, record.initialValue);
+          if (!Object.is(record.uncontrolledValue, value)) {
+            record.uncontrolledValue = value;
+          }
           if (record.dirty !== nextDirty) {
             record.dirty = nextDirty;
             changed = true;

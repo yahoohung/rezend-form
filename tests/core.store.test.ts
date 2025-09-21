@@ -1,4 +1,11 @@
-import { createFormStore, parsePath, setAtPath, getAtPath } from "@form/core";
+import {
+  createFormStore,
+  parsePath,
+  setAtPath,
+  getAtPath,
+  type Plugin,
+  type Validator
+} from "@form/core";
 
 describe("createFormStore", () => {
   it("marks fields touched and dirty independently", () => {
@@ -45,6 +52,66 @@ describe("createFormStore", () => {
     expect(seen).toEqual([false, true]);
 
     unsubscribe();
+  });
+
+  it("passes the latest uncontrolled value into validators", () => {
+    const values: unknown[] = [];
+    const validator: Validator = (value) => {
+      values.push(value);
+      return { ok: value === "ok" };
+    };
+
+    const store = createFormStore();
+    store.register("field", { initialValue: "", validate: validator });
+
+    store.read(() => "ok");
+
+    const result = store.validate("field");
+
+    expect(result).toEqual({ ok: true });
+    expect(values).toEqual(["ok"]);
+  });
+
+  it("resets dirty state when a new initial value is provided", () => {
+    const store = createFormStore();
+    const firstCleanup = store.register("user.count", { mode: "controlled", initialValue: 1 });
+
+    store.setControlledValue("user.count", 2);
+    expect(store.getDirty("user.count")).toBe(true);
+
+    const secondCleanup = store.register("user.count", { mode: "controlled", initialValue: 2 });
+
+    expect(store.getDirty("user.count")).toBe(false);
+
+    secondCleanup();
+    firstCleanup();
+  });
+
+  it("clears stale errors when validators are removed", () => {
+    let removeValidator: (() => void) | undefined;
+    const validator: Validator = (value) =>
+      typeof value === "string" && value === "ok"
+        ? { ok: true }
+        : { ok: false, message: "not ok" };
+
+    const plugin: Plugin = {
+      name: "validator",
+      setup(ctx) {
+        removeValidator = ctx.addValidator("user.email", validator);
+      }
+    };
+
+    const store = createFormStore({ plugins: [plugin] });
+    store.register("user.email", { mode: "controlled", initialValue: "" });
+
+    store.setControlledValue("user.email", "fail");
+    expect(store.validate("user.email")).toEqual({ ok: false, message: "not ok" });
+    expect(store.getError("user.email")).toBe("not ok");
+
+    removeValidator?.();
+
+    expect(store.validate("user.email")).toEqual({ ok: true });
+    expect(store.getError("user.email")).toBeNull();
   });
 });
 

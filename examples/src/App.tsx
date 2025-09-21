@@ -23,8 +23,8 @@ export function App() {
 
   useEffect(() => {
     const cleanups = [
-      store.register("email", { initialValue: "" }),
-      store.register("fullName", { initialValue: "" })
+      store.register("email", { mode: "controlled", initialValue: "" }),
+      store.register("fullName", { mode: "controlled", initialValue: "" })
     ];
     return () => {
       for (const cleanup of cleanups) {
@@ -37,7 +37,7 @@ export function App() {
     setFields((prev) =>
       prev.map((field) => (field.name === name ? { ...field, value } : field))
     );
-    store.markDirty(name);
+    store.setControlledValue(name, value);
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
