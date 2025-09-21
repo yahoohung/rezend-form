@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "module": "ES2020",
+    "moduleResolution": "Node"
+  },
+  "include": ["tests/perf/**/*.ts"]
+}
