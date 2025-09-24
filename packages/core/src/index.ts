@@ -7,7 +7,37 @@
 /** Maximum items stored in the path parse cache. */
 const PATH_CACHE_LIMIT = 500;
 
-const pathCache = new Map<string, readonly string[]>();
+function createLRUCache<K, V>(limit: number) {
+  const cache = new Map<K, V>();
+
+  return {
+    get(key: K): V | undefined {
+      const value = cache.get(key);
+      if (value !== undefined) {
+        // Move to end to mark as recently used
+        cache.delete(key);
+        cache.set(key, value);
+      }
+      return value;
+    },
+    set(key: K, value: V) {
+      if (limit <= 0) {
+        return;
+      }
+      if (cache.has(key)) {
+        // If exists, delete old one to re-insert at the end
+        cache.delete(key);
+      } else if (cache.size >= limit) {
+        // If cache is full, evict least recently used
+        const firstKey = cache.keys().next().value;
+        cache.delete(firstKey);
+      }
+      cache.set(key, value);
+    },
+  };
+}
+
+const pathCache = createLRUCache<string, readonly string[]>(PATH_CACHE_LIMIT);
 
 /**
  * A dotted or bracket style path string used to address form fields.
@@ -274,12 +304,6 @@ export function parsePath(path: FieldPath): readonly string[] {
 
   const frozen = Object.freeze(tokens.slice());
   pathCache.set(path, frozen);
-  if (pathCache.size > PATH_CACHE_LIMIT) {
-    const first = pathCache.keys().next();
-    if (!first.done) {
-      pathCache.delete(first.value);
-    }
-  }
   return frozen;
 }
 
