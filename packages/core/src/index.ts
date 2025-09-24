@@ -57,6 +57,9 @@ export interface RegisterOptions {
   meta?: unknown;
 }
 
+/** Callback for wildcard subscriptions. */
+export type WatchCallback = (change: { path: FieldPath; value: unknown }) => void;
+
 /**
  * Mutation context passed through middleware.
  */
@@ -93,6 +96,13 @@ export interface PluginContext {
   parsePath(path: FieldPath): readonly string[];
   /** Subscribe using the same rules as the Store. */
   subscribe: FormStore["subscribe"];
+  /** Watch for changes using a wildcard pattern. */
+  watch(pattern: FieldPath, cb: WatchCallback): () => void;
+
+  /**
+   * Dispose the store and clean up any plugin resources.
+   */
+  destroy: FormStore["destroy"];
 }
 
 /** Plugin surface kept small and explicit. */
@@ -159,6 +169,17 @@ export interface FormStore {
    * The callback fires only when the selected slice changes.
    */
   subscribe<T>(selector: (s: Snapshot) => T, cb: (slice: T) => void): () => void;
+
+  /**
+   * Watch for changes on paths matching a wildcard pattern.
+   * The callback receives the exact path and value that changed.
+   */
+  watch(pattern: FieldPath, cb: WatchCallback): () => void;
+
+  /**
+   * Dispose the store and clean up any plugin resources.
+   */
+  destroy(): void;
 }
 
 /** Internal field bookkeeping. */
@@ -180,6 +201,12 @@ interface Subscription<T> {
   selector: (snapshot: Snapshot) => T;
   callback: (slice: T) => void;
   lastValue: T;
+}
+
+/** Wildcard subscription entry. */
+interface WatchSubscription {
+  pattern: readonly string[];
+  callback: WatchCallback;
 }
 
 /** Validation tracking info used to ignore stale async results. */
@@ -254,6 +281,19 @@ export function parsePath(path: FieldPath): readonly string[] {
     }
   }
   return frozen;
+}
+
+/**
+ * Check if a path matches a wildcard pattern.
+ * The wildcard `*` matches exactly one segment.
+ * The pattern and path must have the same length.
+ */
+export function isMatch(pattern: readonly string[], path: readonly string[]): boolean {
+  if (pattern.length !== path.length || pattern.length === 0) {
+    return false;
+  }
+
+  return pattern.every((p, i) => p === "*" || p === path[i]);
 }
 
 /**
@@ -358,6 +398,21 @@ function notifySubscribers(subscribers: Set<Subscription<unknown>>, snapshot: Sn
   }
 }
 
+/** Internal helper to notify wildcard subscribers. */
+function notifyWatchers(
+  watchers: Set<WatchSubscription>,
+  changedPath: FieldPath,
+  newValue: unknown,
+  parse: typeof parsePath
+) {
+  const pathTokens = parse(changedPath);
+  for (const watcher of watchers) {
+    if (isMatch(watcher.pattern, pathTokens)) {
+      watcher.callback({ path: changedPath, value: newValue });
+    }
+  }
+}
+
 /**
  * Compose middleware right-to-left. Keeps the implementation obvious.
  */
@@ -369,6 +424,14 @@ export function composeMiddleware(mw: Middleware[], reducer: Next): Next {
   return mw.reduceRight((acc, fn) => fn(acc), reducer);
 }
 
+const NO_WATCH_VALUE = Symbol("rezend:no-watch");
+
+interface MutationResult<R> {
+  changed: boolean;
+  value: R;
+  watchValue?: unknown;
+}
+
 /**
  * Create a new form store instance with the provided options.
  */
@@ -377,9 +440,15 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
   const fieldValidators = new Map<FieldPath, Set<Validator>>();
   const validationTracker = new Map<FieldPath | null, ValidationTracker>();
   const subscribers = new Set<Subscription<unknown>>();
+  const watchers = new Set<WatchSubscription>();
   const middlewareBag: Middleware[] = [...(options.middleware ?? [])];
   const pluginCleanups: Array<() => void> = [];
   const eventListeners = new Map<string, Set<(payload: unknown) => () => void>>();
+
+  let isNotificationScheduled = false;
+  let hasChangedInBatch = false;
+  const changedPathsInBatch = new Set<FieldPath>();
+  const watchQueue: Array<{ path: FieldPath; value: unknown }> = [];
 
   let epoch = 0;
 
@@ -393,6 +462,32 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     getError(path: FieldPath) {
       return fields.get(path)?.error ?? null;
     }
+  };
+
+  const flushNotifications = () => {
+    if (hasChangedInBatch) {
+      for (const sub of subscribers) {
+        // A simple but effective optimization: check if the selector's string representation
+        // contains any of the changed paths. This avoids re-running expensive selectors.
+        const selectorString = sub.selector.toString();
+        if (Array.from(changedPathsInBatch).some((p) => selectorString.includes(p))) {
+          const nextValue = sub.selector(snapshot);
+          if (!Object.is(nextValue, sub.lastValue)) {
+            sub.lastValue = nextValue;
+            sub.callback(nextValue as never);
+          }
+        }
+      }
+    }
+
+    // Process batched watch events
+    while (watchQueue.length > 0) {
+      const event = watchQueue.shift();
+      if (event) {
+        notifyWatchers(watchers, event.path, event.value, parsePath);
+      }
+    }
+    isNotificationScheduled = false;
   };
 
   const emitEvent = (type: "register" | "unregister" | "validate" | "commit", payload: unknown) => {
@@ -412,7 +507,7 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     type: string,
     path: FieldPath | undefined,
     payload: unknown,
-    apply: () => { changed: boolean; value: R }
+    apply: () => MutationResult<R>
   ): R => {
     const context: MutCtx = {
       type,
@@ -425,10 +520,23 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     const resultBox: { value: R | undefined } = { value: undefined };
 
     const base: Next = () => {
-      const { changed, value } = apply();
+      const result = apply();
+      const { changed, value } = result;
+      const watchValue = "watchValue" in result ? result.watchValue : NO_WATCH_VALUE;
       resultBox.value = value;
+
       if (changed) {
-        notifySubscribers(subscribers, snapshot);
+        hasChangedInBatch = true;
+        if (path) {
+          changedPathsInBatch.add(path);
+        }
+        if (path && watchValue !== NO_WATCH_VALUE) {
+          watchQueue.push({ path, value: watchValue });
+        }
+        if (!isNotificationScheduled) {
+          isNotificationScheduled = true;
+          queueMicrotask(flushNotifications);
+        }
         emitEvent("commit", { type, path, payload, epoch: context.epoch });
       }
     };
@@ -539,7 +647,7 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     const formResult = firstFail ?? { ok: true };
     if (!formResult.ok) {
       emitEvent("validate", { path: null, result: formResult });
-    }
+    } // This event might need to be wrapped in runMutation if it needs to cause updates
     return formResult;
   };
 
@@ -603,8 +711,9 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
             fieldValidators.delete(path);
             if (existed) {
               emitEvent("unregister", { path });
+              return { changed: true, value: undefined, watchValue: undefined };
             }
-            return { changed: existed, value: undefined };
+            return { changed: false, value: undefined };
           });
 
         return { changed: true, value: cleanup };
@@ -648,13 +757,22 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
         if (record.mode !== "controlled") {
           record.mode = "controlled";
         }
-        record.controlledValue = value;
+        const previousValue = record.controlledValue;
+        const valueChanged = !Object.is(previousValue, value);
         const nextDirty = !Object.is(value, record.initialValue);
-        if (record.dirty === nextDirty) {
+        const dirtyChanged = record.dirty !== nextDirty;
+
+        if (!valueChanged && !dirtyChanged) {
           return { changed: false, value: undefined };
         }
-        record.dirty = nextDirty;
-        return { changed: true, value: undefined };
+
+        if (valueChanged) {
+          record.controlledValue = value;
+        }
+        if (dirtyChanged) {
+          record.dirty = nextDirty;
+        }
+        return { changed: true, value: undefined, watchValue: value };
       });
     },
 
@@ -679,23 +797,34 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     },
 
     read(getDomValue) {
-      let changed = false;
+      let dirtyChanged = false;
+      let valueChanged = false;
+      const watchEvents: Array<{ path: FieldPath; value: unknown }> = [];
       for (const [path, record] of fields) {
         if (record.mode === "uncontrolled") {
           const value = getDomValue(path);
           const nextDirty = !Object.is(value, record.initialValue);
           if (!Object.is(record.uncontrolledValue, value)) {
             record.uncontrolledValue = value;
+            valueChanged = true;
+            watchEvents.push({ path, value });
           }
           if (record.dirty !== nextDirty) {
             record.dirty = nextDirty;
-            changed = true;
+            dirtyChanged = true;
           }
         }
       }
-      if (changed) {
-        notifySubscribers(subscribers, snapshot);
+      if (dirtyChanged || valueChanged) {
+        hasChangedInBatch = true;
         emitEvent("commit", { type: "read", path: undefined });
+      }
+      if (watchEvents.length > 0) {
+        for (const event of watchEvents) {
+          watchQueue.push({ path: event.path, value: event.value });
+          // Since read() is a bulk operation, we should also mark paths for subscribers
+          changedPathsInBatch.add(event.path);
+        }
       }
       return snapshot;
     },
@@ -711,6 +840,43 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
       return () => {
         subscribers.delete(entry);
       };
+    },
+
+    watch(pattern, cb) {
+      const entry: WatchSubscription = {
+        pattern: parsePath(pattern),
+        callback: cb
+      };
+      watchers.add(entry);
+      return () => {
+        watchers.delete(entry);
+      };
+    },
+
+    destroy() {
+      let firstError: unknown;
+      while (pluginCleanups.length > 0) {
+        const cleanup = pluginCleanups.pop();
+        if (!cleanup) {
+          continue;
+        }
+        try {
+          cleanup();
+        } catch (error) {
+          if (!firstError) {
+            firstError = error;
+          }
+        }
+      }
+      eventListeners.clear();
+      watchers.clear();
+      subscribers.clear();
+      fieldValidators.clear();
+      fields.clear();
+      validationTracker.clear();
+      if (firstError) {
+        throw firstError;
+      }
     }
   };
 
@@ -733,7 +899,9 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
       return addValidatorInternal(path, validator);
     },
     parsePath,
-    subscribe: store.subscribe
+    subscribe: store.subscribe,
+    watch: store.watch,
+    destroy: store.destroy
   };
 
   for (const plugin of options.plugins ?? []) {
