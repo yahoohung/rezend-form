@@ -231,6 +231,7 @@ interface Subscription<T> {
   selector: (snapshot: Snapshot) => T;
   callback: (slice: T) => void;
   lastValue: T;
+  dependencies: Set<FieldPath>;
 }
 
 /** Wildcard subscription entry. */
@@ -321,6 +322,43 @@ export function isMatch(pattern: readonly string[], path: readonly string[]): bo
 }
 
 /**
+ * A helper type that recursively finds the type of a property at a given path.
+ *
+ * @template T The object type to search within.
+ * @template P The dot-separated path string.
+ *
+ * @example
+ * type User = { address: { city: string } };
+ * type CityType = GetValue<User, 'address.city'>; // string
+ *
+ * @remarks This type provides type-level inference for dot-separated paths.
+ * The runtime implementation correctly handles all path notations supported by `parsePath`.
+ */
+export type GetValue<T, P extends string> = P extends `${infer Key}.${infer Rest}`
+  ? Key extends keyof T
+    ? GetValue<NonNullable<T[Key]>, Rest>
+    : undefined
+  : P extends keyof T
+  ? T[P]
+  : undefined;
+
+/**
+ * Gets the value of a deeply nested property from an object using a path string.
+ * This function is type-safe, and the return type is inferred from the path.
+ *
+ * The type-level inference currently only supports dot-notation paths.
+ * The runtime logic supports all paths handled by `parsePath`.
+ *
+ * @param obj The object to retrieve the property from.
+ * @param path A dot-separated string representing the path to the property.
+ * @returns The value of the property, or undefined if the path is invalid.
+ */
+export function getValue<T extends object, P extends string>(obj: T, path: P): GetValue<T, P> {
+  const tokens = parsePath(path);
+  return getAtPath(obj, tokens) as GetValue<T, P>;
+}
+
+/**
  * Get a value from a nested object by tokens.
  */
 export function getAtPath(obj: unknown, tokens: readonly string[]): unknown {
@@ -339,6 +377,27 @@ export function getAtPath(obj: unknown, tokens: readonly string[]): unknown {
     }
   }
   return current;
+}
+
+/**
+ * Sets the value of a deeply nested property in an object using a path string.
+ * This function is type-safe and supports structural sharing.
+ *
+ * The type-level inference currently only supports dot-notation paths.
+ * The runtime logic supports all paths handled by `parsePath`.
+ *
+ * @param obj The object to update.
+ * @param path A dot-separated string representing the path to the property.
+ * @param valueOrUpdater The new value or a function that receives the previous value and returns the new one.
+ * @returns A new object with the updated property, or the original object if the value is unchanged.
+ */
+export function setValue<T extends object, P extends string>(
+  obj: T,
+  path: P,
+  valueOrUpdater: GetValue<T, P> | ((prev: GetValue<T, P>) => GetValue<T, P>)
+): T {
+  const tokens = parsePath(path);
+  return setAtPath(obj, tokens, valueOrUpdater as any);
 }
 
 /**
@@ -424,13 +483,21 @@ function notifySubscribers(subscribers: Set<Subscription<unknown>>, snapshot: Sn
 
 /** Internal helper to notify wildcard subscribers. */
 function notifyWatchers(
-  watchers: Set<WatchSubscription>,
+  specificWatchers: Map<FieldPath, Set<WatchSubscription>>,
+  wildcardWatchers: Set<WatchSubscription>,
   changedPath: FieldPath,
   newValue: unknown,
   parse: typeof parsePath
 ) {
+  const specific = specificWatchers.get(changedPath);
+  if (specific) {
+    for (const watcher of specific) {
+      watcher.callback({ path: changedPath, value: newValue });
+    }
+  }
+
   const pathTokens = parse(changedPath);
-  for (const watcher of watchers) {
+  for (const watcher of wildcardWatchers) {
     if (isMatch(watcher.pattern, pathTokens)) {
       watcher.callback({ path: changedPath, value: newValue });
     }
@@ -464,7 +531,9 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
   const fieldValidators = new Map<FieldPath, Set<Validator>>();
   const validationTracker = new Map<FieldPath | null, ValidationTracker>();
   const subscribers = new Set<Subscription<unknown>>();
-  const watchers = new Set<WatchSubscription>();
+  const subscribersByPath = new Map<FieldPath, Set<Subscription<unknown>>>();
+  const specificWatchers = new Map<FieldPath, Set<WatchSubscription>>();
+  const wildcardWatchers = new Set<WatchSubscription>();
   const middlewareBag: Middleware[] = [...(options.middleware ?? [])];
   const pluginCleanups: Array<() => void> = [];
   const eventListeners = new Map<string, Set<(payload: unknown) => () => void>>();
@@ -475,6 +544,7 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
   const watchQueue: Array<{ path: FieldPath; value: unknown }> = [];
 
   let epoch = 0;
+  let currentDependencies: Set<FieldPath> | null = null;
 
   const snapshot: Snapshot = {
     getTouched(path: FieldPath) {
@@ -488,27 +558,84 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     }
   };
 
+  const snapshotProxyHandler: ProxyHandler<Snapshot> = {
+    get(target, prop: keyof Snapshot, receiver) {
+      const originalMethod = target[prop];
+      if (prop === "getTouched" || prop === "getDirty" || prop === "getError") {
+        return (path: FieldPath) => {
+          if (currentDependencies) {
+            currentDependencies.add(path);
+          }
+          return originalMethod.call(target, path);
+        };
+      }
+      return Reflect.get(target, prop, receiver);
+    }
+  };
+  const proxiedSnapshot = new Proxy(snapshot, snapshotProxyHandler);
+
   const flushNotifications = () => {
     if (hasChangedInBatch) {
-      for (const sub of subscribers) {
-        // A simple but effective optimization: check if the selector's string representation
-        // contains any of the changed paths. This avoids re-running expensive selectors.
-        const selectorString = sub.selector.toString();
-        if (Array.from(changedPathsInBatch).some((p) => selectorString.includes(p))) {
-          const nextValue = sub.selector(snapshot);
-          if (!Object.is(nextValue, sub.lastValue)) {
-            sub.lastValue = nextValue;
-            sub.callback(nextValue as never);
+      const subscribersToNotify = new Set<Subscription<unknown>>();
+      for (const path of changedPathsInBatch) {
+        const pathSubscribers = subscribersByPath.get(path);
+        if (pathSubscribers) {
+          for (const sub of pathSubscribers) {
+            subscribersToNotify.add(sub);
           }
         }
       }
+
+      for (const sub of subscribersToNotify) {
+        const oldDependencies = sub.dependencies;
+        sub.dependencies = new Set<FieldPath>();
+
+        currentDependencies = sub.dependencies;
+        let nextValue;
+        try {
+          nextValue = sub.selector(proxiedSnapshot);
+        } finally {
+          currentDependencies = null;
+        }
+
+        const newDependencies = sub.dependencies;
+
+        for (const path of oldDependencies) {
+          if (!newDependencies.has(path)) {
+            const set = subscribersByPath.get(path);
+            if (set) {
+              set.delete(sub);
+              if (set.size === 0) {
+                subscribersByPath.delete(path);
+              }
+            }
+          }
+        }
+        for (const path of newDependencies) {
+          if (!oldDependencies.has(path)) {
+            if (!subscribersByPath.has(path)) {
+              subscribersByPath.set(path, new Set());
+            }
+            subscribersByPath.get(path)!.add(sub);
+          }
+        }
+
+        if (!Object.is(nextValue, sub.lastValue)) {
+          sub.lastValue = nextValue;
+          sub.callback(nextValue as never);
+        }
+      }
     }
+
+    // Reset for next batch
+    hasChangedInBatch = false;
+    changedPathsInBatch.clear();
 
     // Process batched watch events
     while (watchQueue.length > 0) {
       const event = watchQueue.shift();
       if (event) {
-        notifyWatchers(watchers, event.path, event.value, parsePath);
+        notifyWatchers(specificWatchers, wildcardWatchers, event.path, event.value, parsePath);
       }
     }
     isNotificationScheduled = false;
@@ -748,6 +875,9 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
       runMutation("markTouched", path, undefined, () => {
         const record = fields.get(path);
         if (!record) {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn(`[rezend] markTouched: field '${path}' not registered.`);
+          }
           return { changed: false, value: undefined };
         }
         if (record.touched) {
@@ -762,6 +892,9 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
       runMutation("markDirty", path, undefined, () => {
         const record = fields.get(path);
         if (!record) {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn(`[rezend] markDirty: field '${path}' not registered.`);
+          }
           return { changed: false, value: undefined };
         }
         if (record.dirty) {
@@ -776,9 +909,15 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
       runMutation("setControlledValue", path, value, () => {
         const record = fields.get(path);
         if (!record) {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn(`[rezend] setControlledValue: field '${path}' not registered.`);
+          }
           return { changed: false, value: undefined };
         }
         if (record.mode !== "controlled") {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn(`[rezend] setControlledValue: field '${path}' is not in 'controlled' mode. The mode has been automatically switched. This may indicate a bug in your code.`);
+          }
           record.mode = "controlled";
         }
         const previousValue = record.controlledValue;
@@ -857,12 +996,39 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
       const entry: Subscription<unknown> = {
         selector,
         callback: cb as (slice: unknown) => void,
-        lastValue: selector(snapshot)
+        lastValue: undefined, // Will be populated below
+        dependencies: new Set<FieldPath>()
       };
+
+      // Run the selector for the first time to track initial dependencies.
+      currentDependencies = entry.dependencies;
+      try {
+        entry.lastValue = selector(proxiedSnapshot);
+      } finally {
+        currentDependencies = null;
+      }
+
       subscribers.add(entry);
+
+      for (const path of entry.dependencies) {
+        if (!subscribersByPath.has(path)) {
+          subscribersByPath.set(path, new Set());
+        }
+        subscribersByPath.get(path)!.add(entry);
+      }
+
       cb(entry.lastValue as never);
       return () => {
         subscribers.delete(entry);
+        for (const path of entry.dependencies) {
+          const set = subscribersByPath.get(path);
+          if (set) {
+            set.delete(entry);
+            if (set.size === 0) {
+              subscribersByPath.delete(path);
+            }
+          }
+        }
       };
     },
 
@@ -871,9 +1037,28 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
         pattern: parsePath(pattern),
         callback: cb
       };
-      watchers.add(entry);
+
+      const hasWildcard = pattern.includes("*");
+      if (hasWildcard) {
+        wildcardWatchers.add(entry);
+        return () => {
+          wildcardWatchers.delete(entry);
+        };
+      }
+
+      if (!specificWatchers.has(pattern)) {
+        specificWatchers.set(pattern, new Set());
+      }
+      specificWatchers.get(pattern)!.add(entry);
+
       return () => {
-        watchers.delete(entry);
+        const set = specificWatchers.get(pattern);
+        if (set) {
+          set.delete(entry);
+          if (set.size === 0) {
+            specificWatchers.delete(pattern);
+          }
+        }
       };
     },
 
@@ -893,8 +1078,10 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
         }
       }
       eventListeners.clear();
-      watchers.clear();
+      specificWatchers.clear();
+      wildcardWatchers.clear();
       subscribers.clear();
+      subscribersByPath.clear();
       fieldValidators.clear();
       fields.clear();
       validationTracker.clear();
@@ -938,10 +1125,4 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
   return store;
 }
 
-/**
- * Minimal convenience hook mirroring the previous experimental API.
- * This allows incremental migration for existing experiments.
- */
-export function useRezendForm(config: { id: string }) {
-  return { id: config.id };
-}
+

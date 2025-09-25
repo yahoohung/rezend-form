@@ -24,7 +24,7 @@
     "build:packages": "pnpm --filter '@form/*' run build",
     "test": "jest",
     "test:coverage": "jest --coverage",
-    "bench": "tsx --tsconfig tsconfig.bench.json tests/perf/form-store.bench.ts",
+    "bench": "NODE_ENV=production tsx --tsconfig tsconfig.bench.json tests/perf/form-store.bench.ts",
     "examples:dev": "pnpm --filter rezend-form-examples dev",
     "examples:build": "pnpm --filter rezend-form-examples build",
     "examples:preview": "pnpm --filter rezend-form-examples preview",

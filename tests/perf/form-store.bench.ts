@@ -12,6 +12,7 @@ function createPreparedStore(numFields: number = FIELD_COUNT): FormStore {
   const store = createFormStore();
   for (let index = 0; index < numFields; index += 1) {
     store.register(`grid[${index}]`, {
+      mode: "controlled",
       initialValue: index,
       validate: (value) => ({ ok: typeof value === "number" }) // Add a simple validator
     });
@@ -23,7 +24,7 @@ function createPreparedStore(numFields: number = FIELD_COUNT): FormStore {
   for (let i = 0; i < DEEP_PATH_DEPTH; i++) {
     currentDeepPath += `.${i}`;
   }
-  store.register(currentDeepPath, { initialValue: 0 });
+  store.register(currentDeepPath, { mode: "controlled", initialValue: 0 });
   return store;
 }
 
@@ -56,7 +57,7 @@ bench
   // Benchmark 3: Repeatedly setting controlled value on a single field
   .add("setControlledValue (single field, repeated)", () => {
     const store = createFormStore();
-    store.register("single.field", { initialValue: 0 });
+    store.register("single.field", { mode: "controlled", initialValue: 0 });
     store.subscribe((s) => s.getDirty("single.field"), () => {}); // Add a subscriber
     for (let i = 0; i < 100; i++) { // Repeat many times within one iteration
       store.setControlledValue("single.field", i);
@@ -129,7 +130,7 @@ bench
     const store = createFormStore();
     const specificWatchUnregisters: (() => void)[] = [];
     for (let i = 0; i < FIELD_COUNT; i++) {
-      store.register(`specific[${i}]`, { initialValue: i });
+      store.register(`specific[${i}]`, { mode: "controlled", initialValue: i });
       specificWatchUnregisters.push(store.watch(`specific[${i}]`, () => {}));
     }
     for (let index = 0; index < FIELD_COUNT; index += 1) {
