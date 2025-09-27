@@ -1,80 +1,38 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { createFormStore } from "@form/core";
+import { Box, Flex, Link, VStack } from '@chakra-ui/react'
+import { NavLink, Route, Routes } from 'react-router-dom'
+import { UncontrolledForm } from './components/UncontrolledForm'
+import { ControlledForm } from './components/ControlledForm'
+import { ValidationForm } from './components/ValidationForm'
+import { ServerUpdatesForm } from './components/ServerUpdatesForm'
+import { PerformanceForm } from './components/PerformanceForm'
 
-type Field = {
-  name: string;
-  value: string;
-};
+const Sidebar = () => (
+  <Box as="aside" w="250px" p={4} borderRight="1px" borderColor="gray.200">
+    <VStack as="nav" align="stretch" spacing={4}>
+      <Link as={NavLink} to="/uncontrolled">Uncontrolled Form</Link>
+      <Link as={NavLink} to="/controlled">Controlled Form</Link>
+      <Link as={NavLink} to="/validation">Validation</Link>
+      <Link as={NavLink} to="/server-updates">Server Updates</Link>
+      <Link as={NavLink} to="/performance">Performance</Link>
+    </VStack>
+  </Box>
+)
 
-const initialFields: Field[] = [
-  { name: "email", value: "" },
-  { name: "fullName", value: "" }
-];
-
-export function App() {
-  const store = useMemo(() => createFormStore(), []);
-  const [fields, setFields] = useState(initialFields);
-
-  useEffect(() => {
-    return store.subscribe((snapshot) => snapshot.getDirty("email"), () => {
-      // expose subscription side effects for demo purposes only
-    });
-  }, [store]);
-
-  useEffect(() => {
-    const cleanups = [
-      store.register("email", { mode: "controlled", initialValue: "" }),
-      store.register("fullName", { mode: "controlled", initialValue: "" })
-    ];
-    return () => {
-      for (const cleanup of cleanups) {
-        cleanup();
-      }
-    };
-  }, [store]);
-
-  function updateField(name: string, value: string) {
-    setFields((prev) =>
-      prev.map((field) => (field.name === name ? { ...field, value } : field))
-    );
-    store.setControlledValue(name, value);
-  }
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const snapshot = store.read((path) => fields.find((field) => field.name === path)?.value ?? "");
-    alert(
-      `Submitting form with dirty flag for email: ${snapshot.getDirty("email")}`
-    );
-  }
-
+const App = () => {
   return (
-    <main className="app">
-      <h1>Rezend Form Demo</h1>
-      <p>
-        This Vite example currently demonstrates the low-level store API. A dedicated React adapter will be added soon.
-      </p>
-
-      <form onSubmit={handleSubmit} data-rezend-form="demo">
-        {fields.map((field) => (
-          <label key={field.name} className="field">
-            <span>{field.name}</span>
-            <input
-              name={field.name}
-              value={field.value}
-              onChange={(event) => updateField(field.name, event.target.value)}
-              onBlur={() => store.markTouched(field.name)}
-            />
-            <span className="hint">
-              touched: {String(store.getTouched(field.name))} · dirty: {String(store.getDirty(field.name))}
-            </span>
-          </label>
-        ))}
-
-        <button type="submit">Submit</button>
-      </form>
-    </main>
-  );
+    <Flex>
+      <Sidebar />
+      <Box as="main" flex={1} p={8}>
+        <Routes>
+          <Route path="/uncontrolled" element={<UncontrolledForm />} />
+          <Route path="/controlled" element={<ControlledForm />} />
+          <Route path="/validation" element={<ValidationForm />} />
+          <Route path="/server-updates" element={<ServerUpdatesForm />} />
+          <Route path="/performance" element={<PerformanceForm />} />
+        </Routes>
+      </Box>
+    </Flex>
+  )
 }
 
-export default App;
+export default App

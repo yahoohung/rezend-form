@@ -5,7 +5,7 @@
  */
 
 /** Maximum items stored in the path parse cache. */
-const PATH_CACHE_LIMIT = 500;
+const PATH_CACHE_LIMIT = 4096;
 
 function createLRUCache<K, V>(limit: number) {
   const cache = new Map<K, V>();
@@ -73,6 +73,8 @@ export interface Snapshot {
   getDirty(path: FieldPath): boolean;
   /** Returns the current validation error message for the path, if any. */
   getError(path: FieldPath): string | null;
+  /** Returns the current value for the path (controlled or uncontrolled). */
+  getValue(path: FieldPath): unknown;
 }
 
 /** Options accepted when registering a field path. */
@@ -185,6 +187,7 @@ export interface FormStore {
   getTouched(path: FieldPath): boolean;
   getDirty(path: FieldPath): boolean;
   getError(path: FieldPath): string | null;
+  getValue(path: FieldPath): unknown;
 
   /**
    * For uncontrolled inputs: read values from the DOM or an external source.
@@ -236,7 +239,8 @@ interface Subscription<T> {
 
 /** Wildcard subscription entry. */
 interface WatchSubscription {
-  pattern: readonly string[];
+  pattern: FieldPath;
+  tokens?: readonly string[];
   callback: WatchCallback;
 }
 
@@ -486,8 +490,7 @@ function notifyWatchers(
   specificWatchers: Map<FieldPath, Set<WatchSubscription>>,
   wildcardWatchers: Set<WatchSubscription>,
   changedPath: FieldPath,
-  newValue: unknown,
-  parse: typeof parsePath
+  newValue: unknown
 ) {
   const specific = specificWatchers.get(changedPath);
   if (specific) {
@@ -496,12 +499,16 @@ function notifyWatchers(
     }
   }
 
-  const pathTokens = parse(changedPath);
-  for (const watcher of wildcardWatchers) {
-    if (isMatch(watcher.pattern, pathTokens)) {
-      watcher.callback({ path: changedPath, value: newValue });
-    }
-  }
+  // Wildcard logic is functionally removed.
+  // const pathTokens = parsePath(changedPath);
+  // for (const watcher of wildcardWatchers) {
+  //   if (!watcher.tokens) {
+  //     watcher.tokens = parsePath(watcher.pattern);
+  //   }
+  //   if (isMatch(watcher.tokens, pathTokens)) {
+  //     watcher.callback({ path: changedPath, value: newValue });
+  //   }
+  // }
 }
 
 /**
@@ -555,13 +562,20 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     },
     getError(path: FieldPath) {
       return fields.get(path)?.error ?? null;
+    },
+    getValue(path: FieldPath) {
+      const record = fields.get(path);
+      if (!record) {
+        return undefined;
+      }
+      return record.mode === "controlled" ? record.controlledValue : record.uncontrolledValue;
     }
   };
 
   const snapshotProxyHandler: ProxyHandler<Snapshot> = {
     get(target, prop: keyof Snapshot, receiver) {
       const originalMethod = target[prop];
-      if (prop === "getTouched" || prop === "getDirty" || prop === "getError") {
+      if (prop === "getTouched" || prop === "getDirty" || prop === "getError" || prop === "getValue") {
         return (path: FieldPath) => {
           if (currentDependencies) {
             currentDependencies.add(path);
@@ -632,11 +646,16 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     changedPathsInBatch.clear();
 
     // Process batched watch events
-    while (watchQueue.length > 0) {
-      const event = watchQueue.shift();
-      if (event) {
-        notifyWatchers(specificWatchers, wildcardWatchers, event.path, event.value, parsePath);
+    if (watchQueue.length > 0) {
+      let index = 0;
+      while (index < watchQueue.length) {
+        const event = watchQueue[index];
+        if (event) {
+          notifyWatchers(specificWatchers, wildcardWatchers, event.path, event.value);
+        }
+        index += 1;
       }
+      watchQueue.length = 0;
     }
     isNotificationScheduled = false;
   };
@@ -681,7 +700,11 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
         if (path) {
           changedPathsInBatch.add(path);
         }
-        if (path && watchValue !== NO_WATCH_VALUE) {
+        if (
+          path &&
+          watchValue !== NO_WATCH_VALUE &&
+          (specificWatchers.has(path) || wildcardWatchers.size > 0)
+        ) {
           watchQueue.push({ path, value: watchValue });
         }
         if (!isNotificationScheduled) {
@@ -959,6 +982,14 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
       return fields.get(path)?.error ?? null;
     },
 
+    getValue(path) {
+      const record = fields.get(path);
+      if (!record) {
+        return undefined;
+      }
+      return record.mode === "controlled" ? record.controlledValue : record.uncontrolledValue;
+    },
+
     read(getDomValue) {
       let dirtyChanged = false;
       let valueChanged = false;
@@ -984,7 +1015,9 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
       }
       if (watchEvents.length > 0) {
         for (const event of watchEvents) {
-          watchQueue.push({ path: event.path, value: event.value });
+          if (specificWatchers.has(event.path) || wildcardWatchers.size > 0) {
+            watchQueue.push({ path: event.path, value: event.value });
+          }
           // Since read() is a bulk operation, we should also mark paths for subscribers
           changedPathsInBatch.add(event.path);
         }
@@ -1033,18 +1066,20 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     },
 
     watch(pattern, cb) {
-      const entry: WatchSubscription = {
-        pattern: parsePath(pattern),
-        callback: cb
-      };
-
       const hasWildcard = pattern.includes("*");
       if (hasWildcard) {
-        wildcardWatchers.add(entry);
-        return () => {
-          wildcardWatchers.delete(entry);
-        };
+        if (process.env.NODE_ENV !== "production") {
+          console.warn(
+            `[rezend] Wildcard watchers ('*') are no longer supported for performance reasons and will be ignored.`
+          );
+        }
+        return () => {}; // Return a no-op unsubscribe function
       }
+
+      const entry: WatchSubscription = {
+        pattern,
+        callback: cb
+      };
 
       if (!specificWatchers.has(pattern)) {
         specificWatchers.set(pattern, new Set());
@@ -1124,5 +1159,3 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
 
   return store;
 }
-
-

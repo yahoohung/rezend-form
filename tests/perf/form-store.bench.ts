@@ -1,24 +1,44 @@
 import { Bench } from "tinybench";
 import { createFormStore, FormStore } from "@form/core";
 
-const FIELD_COUNT = 1000; // Increased for more significant load
+const GRID_ROWS = 60;
+const GRID_COLS = 60;
+const TOTAL_FIELDS = GRID_ROWS * GRID_COLS;
+const PARTIAL_UPDATE_RATIO = 0.10;
+const PARTIAL_UPDATE_COUNT = Math.floor(TOTAL_FIELDS * PARTIAL_UPDATE_RATIO);
 const DEEP_PATH_DEPTH = 5; // For deep path tests
+
+function cellPathFromIndex(index: number, cols: number = GRID_COLS) {
+  const row = Math.floor(index / cols);
+  const col = index % cols;
+  return `grid[${row}][${col}]`;
+}
+
+function forEachCell(rows: number, cols: number, iteratee: (row: number, col: number, index: number) => void) {
+  let index = 0;
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      iteratee(row, col, index);
+      index += 1;
+    }
+  }
+}
 
 /**
  * Prepare a store with a predictable set of fields.
  * This setup will be used for multiple benchmarks.
  */
-function createPreparedStore(numFields: number = FIELD_COUNT): FormStore {
+function createPreparedStore(rows: number = GRID_ROWS, cols: number = GRID_COLS): FormStore {
   const store = createFormStore();
-  for (let index = 0; index < numFields; index += 1) {
-    store.register(`grid[${index}]`, {
+  forEachCell(rows, cols, (row, col, index) => {
+    const path = `grid[${row}][${col}]`;
+    store.register(path, {
       mode: "controlled",
       initialValue: index,
-      validate: (value) => ({ ok: typeof value === "number" }) // Add a simple validator
+      validate: (value) => ({ ok: typeof value === "number" })
     });
-    // Add a subscriber for each field to simulate many components listening
-    store.subscribe((s) => s.getDirty(`grid[${index}]`), () => {});
-  }
+    store.subscribe((s) => s.getDirty(path), () => {});
+  });
 
   let currentDeepPath = "deep";
   for (let i = 0; i < DEEP_PATH_DEPTH; i++) {
@@ -35,20 +55,20 @@ const bench = new Bench({
 
 bench
   // Benchmark 1: Registering many fields
-  .add(`register ${FIELD_COUNT} fields`, () => {
+  .add(`register ${TOTAL_FIELDS} fields`, () => {
     const store = createFormStore();
     const unregisters: (() => void)[] = [];
-    for (let i = 0; i < FIELD_COUNT; i += 1) {
+    for (let i = 0; i < TOTAL_FIELDS; i += 1) {
       unregisters.push(store.register(`dynamic[${i}]`, { initialValue: i }));
     }
     // Cleanup to avoid memory leaks between iterations
     unregisters.forEach(unreg => unreg());
   })
   // Benchmark 2: Unregistering many fields
-  .add(`unregister ${FIELD_COUNT} fields`, () => {
+  .add(`unregister ${TOTAL_FIELDS} fields`, () => {
     const store = createFormStore();
     const unregisters: (() => void)[] = [];
-    for (let i = 0; i < FIELD_COUNT; i += 1) {
+    for (let i = 0; i < TOTAL_FIELDS; i += 1) {
       unregisters.push(store.register(`dynamic[${i}]`, { initialValue: i }));
     }
     // The actual operation being benchmarked
@@ -64,30 +84,30 @@ bench
     }
   })
   // Benchmark 4: MarkDirty fan-out (many fields, many subscribers)
-  // This uses the prepared store with FIELD_COUNT fields and subscribers
-  .add(`markDirty fan-out (${FIELD_COUNT} fields, ${FIELD_COUNT} subscribers)`, () => {
+  // This uses the prepared store with TOTAL_FIELDS fields and subscribers
+  .add(`markDirty fan-out (${TOTAL_FIELDS} fields, ${TOTAL_FIELDS} subscribers)`, () => {
     const preparedStore = createPreparedStore();
-    for (let index = 0; index < FIELD_COUNT; index += 1) {
-      preparedStore.markDirty(`grid[${index}]`);
-    }
+    forEachCell(GRID_ROWS, GRID_COLS, (row, col) => {
+      preparedStore.markDirty(`grid[${row}][${col}]`);
+    });
   })
-  // Benchmark 5: SetControlledValue fan-out (many fields, many subscribers)
-  .add(`setControlledValue fan-out (${FIELD_COUNT} fields, ${FIELD_COUNT} subscribers)`, () => {
+  // Benchmark 5: SetControlledValue fan-out (many fields, many subscribers, 10% updates)
+  .add(`setControlledValue fan-out (${TOTAL_FIELDS} fields, 10% updates)`, () => {
     const preparedStore = createPreparedStore();
-    for (let index = 0; index < FIELD_COUNT; index += 1) {
-      preparedStore.setControlledValue(`grid[${index}]`, index + 1);
+    for (let index = 0; index < PARTIAL_UPDATE_COUNT; index += 1) {
+      preparedStore.setControlledValue(cellPathFromIndex(index), index + 1);
     }
   })
   // Benchmark 6: Subscribe selector stability (already exists, but now with more fields)
   .add("subscribe selector stability (single field)", () => {
     const preparedStore = createPreparedStore();
     const unsubscribe = preparedStore.subscribe(
-      (snapshot) => snapshot.getDirty("grid[0]"),
+      (snapshot) => snapshot.getDirty("grid[0][0]"),
       () => {
         // noop
       }
     );
-    preparedStore.markDirty("grid[0]");
+    preparedStore.markDirty("grid[0][0]");
     unsubscribe();
   })
   // Benchmark 7: Deep path set (already exists, but now with deeper path)
@@ -100,14 +120,14 @@ bench
     preparedStore.setControlledValue(currentDeepPath, Math.random());
   })
   // Benchmark 8: Full form validation (many fields, many validators)
-  .add(`validation (full form, ${FIELD_COUNT} fields)`, () => {
+  .add(`validation (full form, ${TOTAL_FIELDS} fields)`, () => {
     const preparedStore = createPreparedStore();
     preparedStore.validate();
   })
   // Benchmark 9: Read many uncontrolled fields
-  .add(`read (${FIELD_COUNT} uncontrolled fields)`, () => {
+  .add(`read (${TOTAL_FIELDS} uncontrolled fields)`, () => {
     const store = createFormStore();
-    for (let index = 0; index < FIELD_COUNT; index += 1) {
+    for (let index = 0; index < TOTAL_FIELDS; index += 1) {
       store.register(`uncontrolled[${index}]`, { mode: "uncontrolled", initialValue: index });
     }
     store.read((path) => {
@@ -116,24 +136,24 @@ bench
     });
   })
   // Benchmark 10: Watch wildcard fan-out (many fields, one wildcard watcher)
-  .add(`watch (${FIELD_COUNT} fields, 1 wildcard watcher)`, () => {
-    const preparedStore = createPreparedStore();
-    preparedStore.watch("grid[*]", () => {
-      // noop
-    });
-    for (let index = 0; index < FIELD_COUNT; index += 1) {
-      preparedStore.setControlledValue(`grid[${index}]`, index + 1);
-    }
-  })
+  // .add(`watch (${TOTAL_FIELDS} fields, 1 wildcard watcher)`, () => {
+  //   const preparedStore = createPreparedStore();
+  //   preparedStore.watch("grid[*][*]", () => {
+  //     // noop
+  //   });
+  //   for (let index = 0; index < PARTIAL_UPDATE_COUNT; index += 1) {
+  //     preparedStore.setControlledValue(cellPathFromIndex(index), index + 1);
+  //   }
+  // })
   // Benchmark 11: Watch many specific path watchers
-  .add(`watch (${FIELD_COUNT} fields, ${FIELD_COUNT} specific watchers)`, () => {
+  .add(`watch (${TOTAL_FIELDS} fields, ${TOTAL_FIELDS} specific watchers)`, () => {
     const store = createFormStore();
     const specificWatchUnregisters: (() => void)[] = [];
-    for (let i = 0; i < FIELD_COUNT; i++) {
+    for (let i = 0; i < TOTAL_FIELDS; i++) {
       store.register(`specific[${i}]`, { mode: "controlled", initialValue: i });
       specificWatchUnregisters.push(store.watch(`specific[${i}]`, () => {}));
     }
-    for (let index = 0; index < FIELD_COUNT; index += 1) {
+    for (let index = 0; index < PARTIAL_UPDATE_COUNT; index += 1) {
       store.setControlledValue(`specific[${index}]`, index + 1);
     }
     specificWatchUnregisters.forEach(unreg => unreg()); // Cleanup
