@@ -1,8 +1,8 @@
 import { Bench } from "tinybench";
 import { createFormStore, FormStore } from "@form/core";
 
-const GRID_ROWS = 60;
-const GRID_COLS = 60;
+const GRID_ROWS = 100;
+const GRID_COLS = 100;
 const TOTAL_FIELDS = GRID_ROWS * GRID_COLS;
 const PARTIAL_UPDATE_RATIO = 0.10;
 const PARTIAL_UPDATE_COUNT = Math.floor(TOTAL_FIELDS * PARTIAL_UPDATE_RATIO);

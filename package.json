@@ -25,12 +25,16 @@
     "test": "jest",
     "test:coverage": "jest --coverage",
     "bench": "NODE_ENV=production tsx --tsconfig tsconfig.bench.json tests/perf/form-store.bench.ts",
+    "bench:compare": "NODE_ENV=test tsx --tsconfig tsconfig.bench.json tests/perf/high-frequency-update.bench.tsx",
+    "bench:compare-plus": "NODE_ENV=test tsx --tsconfig tsconfig.bench.json tests/perf/compare-plus.bench.tsx",
     "examples:dev": "pnpm --filter rezend-form-examples dev",
     "examples:build": "pnpm --filter rezend-form-examples build",
     "examples:preview": "pnpm --filter rezend-form-examples preview",
     "docs:dev": "pnpm --filter rezend-form-docs dev",
     "docs:build": "pnpm --filter rezend-form-docs build",
-    "docs:preview": "pnpm --filter rezend-form-docs preview"
+    "docs:preview": "pnpm --filter rezend-form-docs preview",
+    "publish:dry": "pnpm --filter '@form/*' publish --dry-run --git-checks=false",
+    "release:check": "pnpm run test && pnpm run typecheck && pnpm run build:packages && pnpm run publish:dry"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^25.0.7",
@@ -44,19 +48,23 @@
     "@types/jest": "^29.5.12",
     "@types/react": "^18.2.46",
     "@types/react-dom": "^18.2.18",
+    "final-form": "^5.0.0",
+    "formik": "^2.4.6",
     "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
     "jsdom": "^24.0.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-hook-form": "^7.63.0",
+    "react-zustand-form": "1.2.6-beta.0",
     "rimraf": "^5.0.5",
     "rollup": "^4.12.0",
     "rollup-plugin-dts": "^6.1.0",
     "size-limit": "^11.0.1",
     "tinybench": "^2.5.0",
     "ts-jest": "^29.1.1",
-    "tsx": "^4.7.0",
-    "typescript": "^5.4.5",
     "tsup": "^8.0.1",
-    "jest-environment-jsdom": "^29.7.0"
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.5"
   }
 }

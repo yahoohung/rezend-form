@@ -4,6 +4,10 @@
  * The implementation follows simple UK English descriptions and keeps the code explicit.
  */
 
+declare const process: { env?: Record<string, string | undefined> } | undefined;
+
+const isDevEnvironment = () => typeof process !== "undefined" && process?.env?.NODE_ENV !== "production";
+
 /** Maximum items stored in the path parse cache. */
 const PATH_CACHE_LIMIT = 4096;
 
@@ -29,8 +33,10 @@ function createLRUCache<K, V>(limit: number) {
         cache.delete(key);
       } else if (cache.size >= limit) {
         // If cache is full, evict least recently used
-        const firstKey = cache.keys().next().value;
-        cache.delete(firstKey);
+        const iterator = cache.keys().next();
+        if (!iterator.done) {
+          cache.delete(iterator.value);
+        }
       }
       cache.set(key, value);
     },
@@ -219,6 +225,7 @@ export interface FormStore {
 interface FieldRecord {
   mode: "uncontrolled" | "controlled";
   validator?: Validator;
+  validators?: Set<Validator>;
   initialValue: unknown;
   controlledValue: unknown;
   uncontrolledValue: unknown;
@@ -535,6 +542,7 @@ interface MutationResult<R> {
  */
 export function createFormStore(options: CreateStoreOptions = {}): FormStore {
   const fields = new Map<FieldPath, FieldRecord>();
+  const fieldLookup: Record<FieldPath, FieldRecord | undefined> = Object.create(null);
   const fieldValidators = new Map<FieldPath, Set<Validator>>();
   const validationTracker = new Map<FieldPath | null, ValidationTracker>();
   const subscribers = new Set<Subscription<unknown>>();
@@ -544,6 +552,22 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
   const middlewareBag: Middleware[] = [...(options.middleware ?? [])];
   const pluginCleanups: Array<() => void> = [];
   const eventListeners = new Map<string, Set<(payload: unknown) => () => void>>();
+  let totalEventListeners = 0;
+  let totalSpecificWatchers = 0;
+  let subscriberCount = 0;
+  let hasMiddleware = middlewareBag.length > 0;
+  let simpleWriteFastPathEnabled = false;
+
+  const updateSimpleWriteFastPath = () => {
+    simpleWriteFastPathEnabled =
+      !hasMiddleware &&
+      subscriberCount === 0 &&
+      totalSpecificWatchers === 0 &&
+      wildcardWatchers.size === 0 &&
+      totalEventListeners === 0;
+  };
+
+  updateSimpleWriteFastPath();
 
   let isNotificationScheduled = false;
   let hasChangedInBatch = false;
@@ -553,18 +577,33 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
   let epoch = 0;
   let currentDependencies: Set<FieldPath> | null = null;
 
+  const getFieldRecord = (path: FieldPath): FieldRecord | undefined => fieldLookup[path];
+
+  const setFieldRecord = (path: FieldPath, record: FieldRecord) => {
+    fields.set(path, record);
+    fieldLookup[path] = record;
+  };
+
+  const deleteFieldRecord = (path: FieldPath) => {
+    const existed = fields.delete(path);
+    if (existed) {
+      delete fieldLookup[path];
+    }
+    return existed;
+  };
+
   const snapshot: Snapshot = {
     getTouched(path: FieldPath) {
-      return fields.get(path)?.touched ?? false;
+      return getFieldRecord(path)?.touched ?? false;
     },
     getDirty(path: FieldPath) {
-      return fields.get(path)?.dirty ?? false;
+      return getFieldRecord(path)?.dirty ?? false;
     },
     getError(path: FieldPath) {
-      return fields.get(path)?.error ?? null;
+      return getFieldRecord(path)?.error ?? null;
     },
     getValue(path: FieldPath) {
-      const record = fields.get(path);
+      const record = getFieldRecord(path);
       if (!record) {
         return undefined;
       }
@@ -661,6 +700,9 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
   };
 
   const emitEvent = (type: "register" | "unregister" | "validate" | "commit", payload: unknown) => {
+    if (totalEventListeners === 0) {
+      return;
+    }
     const listeners = eventListeners.get(type);
     if (!listeners || listeners.size === 0) {
       return;
@@ -696,18 +738,24 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
       resultBox.value = value;
 
       if (changed) {
-        hasChangedInBatch = true;
-        if (path) {
-          changedPathsInBatch.add(path);
+        const shouldNotifySubscribers = subscribers.size > 0;
+        const shouldNotifyWatchers = totalSpecificWatchers > 0 || wildcardWatchers.size > 0;
+
+        if (shouldNotifySubscribers) {
+          hasChangedInBatch = true;
+          if (path) {
+            changedPathsInBatch.add(path);
+          }
         }
         if (
+          shouldNotifyWatchers &&
           path &&
           watchValue !== NO_WATCH_VALUE &&
           (specificWatchers.has(path) || wildcardWatchers.size > 0)
         ) {
           watchQueue.push({ path, value: watchValue });
         }
-        if (!isNotificationScheduled) {
+        if ((shouldNotifySubscribers || shouldNotifyWatchers) && !isNotificationScheduled) {
           isNotificationScheduled = true;
           queueMicrotask(flushNotifications);
         }
@@ -726,14 +774,29 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
       list = new Set();
       fieldValidators.set(path, list);
     }
+    const record = getFieldRecord(path);
+    if (record) {
+      record.validators = list;
+    }
     return list;
   };
 
   const addValidatorInternal = (path: FieldPath, validator: Validator) => {
     const list = ensureValidatorEntry(path);
     list.add(validator);
+    const record = getFieldRecord(path);
+    if (record) {
+      record.validators = list;
+    }
     return () => {
       list?.delete(validator);
+      if (list && list.size === 0) {
+        fieldValidators.delete(path);
+        const currentRecord = getFieldRecord(path);
+        if (currentRecord) {
+          currentRecord.validators = undefined;
+        }
+      }
     };
   };
 
@@ -748,29 +811,43 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
 
   const performValidation = (path?: FieldPath): ValidationResult | Promise<ValidationResult> => {
     if (path) {
-      const validators = fieldValidators.get(path);
-      const record = fields.get(path);
-      if (!validators || validators.size === 0 || !record) {
-        if (record && record.error !== null) {
+      const record = getFieldRecord(path);
+      if (!record) {
+        if (isDevEnvironment()) {
+          console.warn(`[rezend] validate: field '${path}' not registered.`);
+        }
+        emitEvent("validate", { path, result: { ok: true } });
+        return { ok: true };
+      }
+
+      const validators = record.validators ?? fieldValidators.get(path);
+      if (!validators || validators.size === 0) {
+        if (record.error !== null) {
           record.error = null;
         }
         emitEvent("validate", { path, result: { ok: true } });
         return { ok: true };
       }
-      const bucket = getValidationBucket(path);
+
       const value = record.mode === "controlled" ? record.controlledValue : record.uncontrolledValue;
       const tasks = Array.from(validators);
       let syncOk = true;
       let syncMessage: string | null = null;
       const promises: Promise<ValidationResult>[] = [];
-      bucket.pending += 1;
-      const ticket = bucket.pending;
+      let bucket: ValidationTracker | null = null;
+      let ticket = 0;
+
       for (const validator of tasks) {
         const result = validator(value, path, snapshot);
         if (result instanceof Promise) {
+          if (!bucket) {
+            bucket = getValidationBucket(path);
+            bucket.pending += 1;
+            ticket = bucket.pending;
+          }
           promises.push(
             result.then((res) => {
-              if (bucket.pending !== ticket) {
+              if (bucket && bucket.pending !== ticket) {
                 return res;
               }
               return res;
@@ -784,14 +861,17 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
         }
       }
 
-      if (promises.length > 0) {
+      if (promises.length > 0 && bucket) {
         return Promise.all(promises).then((results) => {
-          if (bucket.pending !== ticket) {
+          if (bucket && bucket.pending !== ticket) {
             return { ok: true };
           }
           const firstFail = results.find((res) => !res.ok);
           const finalResult = firstFail ?? buildValidationResult(syncOk, syncMessage);
-          record.error = finalResult.ok ? null : finalResult.message ?? null;
+          const nextError = finalResult.ok ? null : finalResult.message ?? null;
+          if (record.error !== nextError) {
+            record.error = nextError;
+          }
           notifySubscribers(subscribers, snapshot);
           emitEvent("validate", { path, result: finalResult });
           return finalResult;
@@ -799,7 +879,10 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
       }
 
       const final = buildValidationResult(syncOk, syncMessage);
-      record.error = final.ok ? null : final.message ?? null;
+      const nextError = final.ok ? null : final.message ?? null;
+      if (record.error !== nextError) {
+        record.error = nextError;
+      }
       emitEvent("validate", { path, result: final });
       return final;
     }
@@ -821,14 +904,14 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     const formResult = firstFail ?? { ok: true };
     if (!formResult.ok) {
       emitEvent("validate", { path: null, result: formResult });
-    } // This event might need to be wrapped in runMutation if it needs to cause updates
+    }
     return formResult;
   };
 
   const store: FormStore = {
     register(path, opts = {}) {
       return runMutation("register", path, opts, () => {
-        const existing = fields.get(path);
+        const existing = getFieldRecord(path);
         const mode = opts.mode ?? existing?.mode ?? "uncontrolled";
         const nextInitialValue = opts.initialValue ?? existing?.initialValue;
         let record: FieldRecord;
@@ -849,11 +932,6 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
         }
 
         record.mode = mode;
-
-        if (opts.validate) {
-          record.validator = opts.validate;
-          addValidatorInternal(path, opts.validate);
-        }
 
         if (nextInitialValue !== undefined && (opts.initialValue !== undefined || !existing)) {
           record.initialValue = nextInitialValue;
@@ -876,12 +954,27 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
           record.meta = opts.meta;
         }
 
-        fields.set(path, record);
+        setFieldRecord(path, record);
+
+        const existingValidators = fieldValidators.get(path);
+        if (opts.validate) {
+          const validatorSet = existingValidators ?? ensureValidatorEntry(path);
+          validatorSet.add(opts.validate);
+          record.validators = validatorSet;
+        } else if (existingValidators) {
+          record.validators = existingValidators;
+        } else {
+          record.validators = undefined;
+        }
+
+        if (opts.validate) {
+          record.validator = opts.validate;
+        }
         emitEvent("register", { path, options: opts });
 
         const cleanup = () =>
           runMutation("unregister", path, undefined, () => {
-            const existed = fields.delete(path);
+            const existed = deleteFieldRecord(path);
             fieldValidators.delete(path);
             if (existed) {
               emitEvent("unregister", { path });
@@ -896,9 +989,9 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
 
     markTouched(path) {
       runMutation("markTouched", path, undefined, () => {
-        const record = fields.get(path);
+        const record = getFieldRecord(path);
         if (!record) {
-          if (process.env.NODE_ENV !== "production") {
+          if (isDevEnvironment()) {
             console.warn(`[rezend] markTouched: field '${path}' not registered.`);
           }
           return { changed: false, value: undefined };
@@ -913,9 +1006,9 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
 
     markDirty(path) {
       runMutation("markDirty", path, undefined, () => {
-        const record = fields.get(path);
+        const record = getFieldRecord(path);
         if (!record) {
-          if (process.env.NODE_ENV !== "production") {
+          if (isDevEnvironment()) {
             console.warn(`[rezend] markDirty: field '${path}' not registered.`);
           }
           return { changed: false, value: undefined };
@@ -929,34 +1022,60 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     },
 
     setControlledValue(path, value) {
-      runMutation("setControlledValue", path, value, () => {
-        const record = fields.get(path);
-        if (!record) {
-          if (process.env.NODE_ENV !== "production") {
-            console.warn(`[rezend] setControlledValue: field '${path}' not registered.`);
-          }
-          return { changed: false, value: undefined };
+      const record = getFieldRecord(path);
+      if (!record) {
+        if (isDevEnvironment()) {
+          console.warn(`[rezend] setControlledValue: field '${path}' not registered.`);
         }
-        if (record.mode !== "controlled") {
-          if (process.env.NODE_ENV !== "production") {
-            console.warn(`[rezend] setControlledValue: field '${path}' is not in 'controlled' mode. The mode has been automatically switched. This may indicate a bug in your code.`);
-          }
-          record.mode = "controlled";
+        return;
+      }
+      if (record.mode !== "controlled") {
+        if (isDevEnvironment()) {
+          console.warn(
+            `[rezend] setControlledValue: field '${path}' is not in 'controlled' mode. The mode has been automatically switched. This may indicate a bug in your code.`
+          );
         }
-        const previousValue = record.controlledValue;
-        const valueChanged = !Object.is(previousValue, value);
-        const nextDirty = !Object.is(value, record.initialValue);
-        const dirtyChanged = record.dirty !== nextDirty;
+        record.mode = "controlled";
+      }
 
-        if (!valueChanged && !dirtyChanged) {
-          return { changed: false, value: undefined };
-        }
+      const previousValue = record.controlledValue;
+      const valueChanged = !Object.is(previousValue, value);
+      const nextDirty = !Object.is(value, record.initialValue);
+      const dirtyChanged = record.dirty !== nextDirty;
 
+      if (!valueChanged && !dirtyChanged) {
+        return;
+      }
+
+      if (simpleWriteFastPathEnabled) {
         if (valueChanged) {
           record.controlledValue = value;
         }
         if (dirtyChanged) {
           record.dirty = nextDirty;
+        }
+        return;
+      }
+
+      runMutation("setControlledValue", path, value, () => {
+        const target = getFieldRecord(path);
+        if (!target) {
+          return { changed: false, value: undefined };
+        }
+        const previous = target.controlledValue;
+        const valueDidChange = !Object.is(previous, value);
+        const nextDirtyState = !Object.is(value, target.initialValue);
+        const dirtyDidChange = target.dirty !== nextDirtyState;
+
+        if (!valueDidChange && !dirtyDidChange) {
+          return { changed: false, value: undefined };
+        }
+
+        if (valueDidChange) {
+          target.controlledValue = value;
+        }
+        if (dirtyDidChange) {
+          target.dirty = nextDirtyState;
         }
         return { changed: true, value: undefined, watchValue: value };
       });
@@ -971,19 +1090,19 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     },
 
     getTouched(path) {
-      return fields.get(path)?.touched ?? false;
+      return getFieldRecord(path)?.touched ?? false;
     },
 
     getDirty(path) {
-      return fields.get(path)?.dirty ?? false;
+      return getFieldRecord(path)?.dirty ?? false;
     },
 
     getError(path) {
-      return fields.get(path)?.error ?? null;
+      return getFieldRecord(path)?.error ?? null;
     },
 
     getValue(path) {
-      const record = fields.get(path);
+      const record = getFieldRecord(path);
       if (!record) {
         return undefined;
       }
@@ -991,6 +1110,8 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     },
 
     read(getDomValue) {
+      const shouldNotifySubscribers = subscribers.size > 0;
+      const shouldNotifyWatchers = totalSpecificWatchers > 0 || wildcardWatchers.size > 0;
       let dirtyChanged = false;
       let valueChanged = false;
       const watchEvents: Array<{ path: FieldPath; value: unknown }> = [];
@@ -1001,25 +1122,42 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
           if (!Object.is(record.uncontrolledValue, value)) {
             record.uncontrolledValue = value;
             valueChanged = true;
-            watchEvents.push({ path, value });
+            if (shouldNotifyWatchers) {
+              watchEvents.push({ path, value });
+            }
+            if (shouldNotifySubscribers) {
+              changedPathsInBatch.add(path);
+            }
           }
           if (record.dirty !== nextDirty) {
             record.dirty = nextDirty;
             dirtyChanged = true;
+            if (shouldNotifySubscribers) {
+              changedPathsInBatch.add(path);
+            }
           }
         }
       }
       if (dirtyChanged || valueChanged) {
-        hasChangedInBatch = true;
+        if (shouldNotifySubscribers) {
+          hasChangedInBatch = true;
+        }
         emitEvent("commit", { type: "read", path: undefined });
       }
-      if (watchEvents.length > 0) {
+      if (shouldNotifyWatchers && watchEvents.length > 0) {
         for (const event of watchEvents) {
           if (specificWatchers.has(event.path) || wildcardWatchers.size > 0) {
             watchQueue.push({ path: event.path, value: event.value });
           }
-          // Since read() is a bulk operation, we should also mark paths for subscribers
-          changedPathsInBatch.add(event.path);
+        }
+      }
+      if (
+        (shouldNotifySubscribers && (dirtyChanged || valueChanged)) ||
+        (shouldNotifyWatchers && watchEvents.length > 0)
+      ) {
+        if (!isNotificationScheduled) {
+          isNotificationScheduled = true;
+          queueMicrotask(flushNotifications);
         }
       }
       return snapshot;
@@ -1042,6 +1180,8 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
       }
 
       subscribers.add(entry);
+      subscriberCount += 1;
+      updateSimpleWriteFastPath();
 
       for (const path of entry.dependencies) {
         if (!subscribersByPath.has(path)) {
@@ -1052,7 +1192,10 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
 
       cb(entry.lastValue as never);
       return () => {
-        subscribers.delete(entry);
+        if (subscribers.delete(entry)) {
+          subscriberCount = Math.max(0, subscriberCount - 1);
+          updateSimpleWriteFastPath();
+        }
         for (const path of entry.dependencies) {
           const set = subscribersByPath.get(path);
           if (set) {
@@ -1068,7 +1211,7 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
     watch(pattern, cb) {
       const hasWildcard = pattern.includes("*");
       if (hasWildcard) {
-        if (process.env.NODE_ENV !== "production") {
+        if (isDevEnvironment()) {
           console.warn(
             `[rezend] Wildcard watchers ('*') are no longer supported for performance reasons and will be ignored.`
           );
@@ -1085,14 +1228,17 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
         specificWatchers.set(pattern, new Set());
       }
       specificWatchers.get(pattern)!.add(entry);
+      totalSpecificWatchers += 1;
+      updateSimpleWriteFastPath();
 
       return () => {
         const set = specificWatchers.get(pattern);
-        if (set) {
-          set.delete(entry);
+        if (set && set.delete(entry)) {
+          totalSpecificWatchers = Math.max(0, totalSpecificWatchers - 1);
           if (set.size === 0) {
             specificWatchers.delete(pattern);
           }
+          updateSimpleWriteFastPath();
         }
       };
     },
@@ -1134,12 +1280,22 @@ export function createFormStore(options: CreateStoreOptions = {}): FormStore {
         eventListeners.set(event, set);
       }
       set.add(cb);
+      totalEventListeners += 1;
+      updateSimpleWriteFastPath();
       return () => {
-        set?.delete(cb);
+        if (set && set.delete(cb)) {
+          totalEventListeners = Math.max(0, totalEventListeners - 1);
+          if (set.size === 0) {
+            eventListeners.delete(event);
+          }
+          updateSimpleWriteFastPath();
+        }
       };
     },
     addMiddleware(mw) {
       middlewareBag.push(mw);
+      hasMiddleware = true;
+      updateSimpleWriteFastPath();
     },
     addValidator(path, validator) {
       return addValidatorInternal(path, validator);
