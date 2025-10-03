@@ -26,25 +26,41 @@ export function Hero({ metrics, children }: HeroProps) {
           </div>
           <div className="space-y-6">
             <h1 className="text-4xl font-semibold leading-tight text-foreground sm:text-5xl md:text-6xl">
-              High-signal form state for ambitious teams.
+              Build calm, fast forms even when data keeps changing.
             </h1>
             <p className="text-lg text-foreground/70 md:text-xl">
-              Start simple with a single input, then scale to thousands of fields without losing reactivity.
-              Rezend Form keeps your UI calm, even when data streams in from servers, sockets, or AI copilots.
+              Rezend Form keeps inputs responsive while servers, automations, or teammates update the same records in real time.
             </p>
+            <ul className="space-y-2 text-sm text-foreground/70">
+              <li>
+                <span className="font-semibold text-foreground">Solo builders</span> plug in the store and publish a working form in minutes.
+              </li>
+              <li>
+                <span className="font-semibold text-foreground">Product teams</span> keep components steady when dozens of updates arrive each second.
+              </li>
+              <li>
+                <span className="font-semibold text-foreground">IT leads</span> get clear change history and simple hooks for business rules.
+              </li>
+            </ul>
           </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <a
               href="#quickstart"
               className="rounded-full bg-gradient-to-r from-emerald-400 via-teal-300 to-sky-400 px-6 py-3 text-base font-semibold text-surface shadow-lg shadow-emerald-400/20 transition hover:shadow-emerald-300/40"
             >
-              Explore the quick start
+              Start building now
+            </a>
+            <a
+              href="#enterprise"
+              className="rounded-full border border-white/15 px-6 py-3 text-base font-semibold text-foreground/70 transition hover:border-white/30 hover:text-foreground"
+            >
+              Review enterprise safeguards
             </a>
             <a
               href="https://stackblitz.com/~/github/rezend/rezend-form"
-              className="rounded-full border border-white/10 px-6 py-3 text-base font-semibold text-foreground/70 transition hover:text-foreground"
+              className="rounded-full border border-white/10 px-6 py-3 text-base font-semibold text-foreground/70 transition hover:border-white/25 hover:text-foreground"
             >
-              Try in StackBlitz
+              Launch StackBlitz demo
             </a>
           </div>
         </div>

@@ -35,7 +35,7 @@ const quickStartSteps = [
         code: "yarn add @form/core"
       }
     ],
-    description: "Bring the zero-dependency store into your project."
+    description: "Install the lightweight core package."
   },
   {
     title: "Create a store",
@@ -80,7 +80,7 @@ form.register("profile.name", {
 });`
       }
     ],
-    description: "Register your first field – controlled and ready to go."
+    description: "Register your first field with an initial value."
   },
   {
     title: "Subscribe & react",
@@ -111,7 +111,7 @@ const unsubscribe = form.subscribe<ProfileName>(
 );`
       }
     ],
-    description: "Selectors stay narrow, so only the right components re-render."
+    description: "Listen for changes and respond without re-rendering everything."
   },
   {
     title: "Bind to your UI",
@@ -201,7 +201,37 @@ export function ProfileForm() {
 }`
       }
     ],
-    description: "Move from store logic to a live form component with markTouched + validate hooks."
+    description: "Move from store logic to a live form component with built-in helpers for touched state and validation."
+  }
+];
+
+const personaTracks = [
+  {
+    title: "Solo builders & feature squads",
+    description: "Ship polished forms without wiring extra state tools.",
+    bullets: [
+      "Add Rezend Form to any React or vanilla project in one import.",
+      "Reuse the quick start snippets directly in production code.",
+      "Open the StackBlitz demo to check the behaviour with live data."
+    ]
+  },
+  {
+    title: "Product teams at scaleups",
+    description: "Keep forms fast even when traffic is heavy.",
+    bullets: [
+      "Watch only the fields a screen needs so big updates do not freeze the UI.",
+      "Add simple rules to run validation, optimistic updates, or sync logic in one place.",
+      "Use the bundled benchmarks to see performance before you ship."
+    ]
+  },
+  {
+    title: "Platform & enterprise IT",
+    description: "Empower product squads while keeping policy, audit, and risk under control.",
+    bullets: [
+      "Change logs include who changed what, which field, and when.",
+      "Add policy checks, logging, or validation modules without touching feature code.",
+      "Deploy on your own stack or Vercel without extra runtime services."
+    ]
   }
 ];
 
@@ -211,9 +241,9 @@ const principles = [
     description:
       "Keep user intent first even when server patches arrive every few milliseconds. Dirty fields stay untouched until the user is ready.",
     bullets: [
-      "Server mutations go through middleware and diff buses",
-      "`markDirty` + `setControlledValue` never fight each other",
-      "Built-in safeguards against prototype pollution"
+      "Server updates pass through reviewable handlers before they touch the UI",
+      "Dirty tracking never collides with incoming value updates",
+      "Built-in protections stop unsafe object paths"
     ]
   },
   {
@@ -221,9 +251,9 @@ const principles = [
     description:
       "Middleware wraps every mutation, so audit logging, access control, and batching live in one predictable lane.",
     bullets: [
-      "`MutCtx` exposes type, path, payload, epoch, timestamp",
-      "Compose unlimited middlewares with near-zero overhead",
-      "Plugins can add validators or lifecycle hooks on the fly"
+      "Each mutation context spells out the type, field path, payload, epoch, and timestamp",
+      "Chain as many custom rules as you need without slowing down",
+      "Add new checks or lifecycle hooks with small plugins"
     ]
   },
   {
@@ -231,9 +261,42 @@ const principles = [
     description:
       "Start with one field, scale out to dense data tables. The store keeps selectors and watchers stable at every step.",
     bullets: [
-      "Subscription dependencies auto-track per selector",
-      "Watchers fan out with microtask batching",
-      "Async validation stays cancellable via epochs"
+      "Listeners automatically follow only the fields they care about",
+      "Updates batch together so large grids stay smooth",
+      "Background validation stops itself when newer input arrives"
+    ]
+  }
+];
+
+const enterpriseSignals = [
+  {
+    title: "Audit-ready event stream",
+    description:
+      "Every change emits structured data you can forward to your logging or analytics tools right away.",
+    bullets: [
+      "Every change event includes who, what field, the new data, and the time.",
+      "Starter templates show how to mask, enrich, or block writes before they land.",
+      "Send those events to your existing data pipeline with only a few lines of code."
+    ]
+  },
+  {
+    title: "Operational guardrails",
+    description:
+      "Design for streaming workloads without sacrificing user intent or compliance.",
+    bullets: [
+      "Touched flags keep focused inputs safe from background updates.",
+      "Collaboration helpers only patch untouched fields, so teammates do not overwrite each other.",
+      "Baseline replay restores a form instantly without losing the change log."
+    ]
+  },
+  {
+    title: "Partner-level support",
+    description:
+      "Roadmap transparency and expert help for regulated teams and mission-critical flows.",
+    bullets: [
+      "Private onboarding sessions for architecture reviews and performance tuning.",
+      "Long-term support channel with coordinated releases and breakage alerts.",
+      "Regular security updates covering dependencies, patch timing, and SOC 2 progress."
     ]
   }
 ];
@@ -241,21 +304,48 @@ const principles = [
 const advancedScenarios = [
   {
     stage: "1",
-    title: "Async validation & fallbacks",
+    title: "Experiment faster",
     description:
-      "Wrap resolvers in middleware to time-box validations and deliver instant optimistic UI while results settle."
+      "Try new validation or fallback flows with simple switches you can enable or disable safely."
   },
   {
     stage: "2",
-    title: "Live collaboration",
+    title: "Scale collaboration",
     description:
-      "Pipe socket events through a plugin that only patches untouched fields. Users keep typing; the backend keeps streaming."
+      "Let live updates flow in while keeping the active user's cursor safe from conflicts."
   },
   {
     stage: "3",
-    title: "Observability layer",
+    title: "Mission control",
     description:
-      "Emit structured diff events into your analytics lake. Every mutation carries the same MutCtx metadata for replay."
+      "Stream change logs to your monitoring tools, rebuild a form on demand, and answer audit questions quickly."
+  }
+];
+
+const benchmarkTakeaways = [
+  {
+    title: "Storm-ready writes",
+    description: "About 24× faster when the server sends rapid-fire updates (34,877 vs 1,431 ops/sec).",
+    bullets: [
+      "Large batches of field updates stay smooth.",
+      "Ideal for shared data grids and dashboards that refresh often."
+    ]
+  },
+  {
+    title: "Instant validation",
+    description: "About 79× faster feedback while a user types (325,736 vs 4,138 ops/sec).",
+    bullets: [
+      "Each keystroke can run checks without slowing typing.",
+      "Leaves room for helper bots or policy checks on every change."
+    ]
+  },
+  {
+    title: "Parity on full checks",
+    description: "Still faster on full-form validation (122,697 ops/sec).",
+    bullets: [
+      "Bulk reviews do not introduce slowdowns.",
+      "Best-practice and default runs match, so the fast path is the default path."
+    ]
   }
 ];
 
@@ -264,9 +354,16 @@ export function HomePage() {
     <div className="min-h-screen bg-surface text-foreground">
       <TopNav />
       <Hero metrics={metrics}>
-        <p className="text-sm text-foreground/70">
-          Deploy on Vercel in seconds. Vite-powered docs deliver instant hot reload, while the store stays framework agnostic.
-        </p>
+        <div className="space-y-2 text-sm text-foreground/65">
+          <p>Framework agnostic · MIT licensed · Zero runtime dependencies</p>
+          <p className="flex flex-wrap items-center gap-1">
+            <span>Need a deeper review?</span>
+            <a href="#enterprise" className="text-accent hover:text-accent/80">
+              Jump to the enterprise checklist
+            </a>
+            <span>.</span>
+          </p>
+        </div>
       </Hero>
 
       <main className="pb-32">
@@ -293,10 +390,32 @@ export function HomePage() {
         </Section>
 
         <Section
+          id="teams"
+          eyebrow="Teams"
+          title="Built to welcome every builder"
+          subtitle="Pick the guidance that matches your day job and ship with confidence."
+        >
+          <div className="grid gap-6 md:grid-cols-3">
+            {personaTracks.map((persona) => (
+              <GradientCard key={persona.title} title={persona.title} description={persona.description}>
+                <ul className="space-y-2 text-sm text-foreground/75">
+                  {persona.bullets.map((bullet) => (
+                    <li key={bullet} className="flex items-start gap-2">
+                      <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" />
+                      <span>{bullet}</span>
+                    </li>
+                  ))}
+                </ul>
+              </GradientCard>
+            ))}
+          </div>
+        </Section>
+
+        <Section
           id="quickstart"
           eyebrow="Quick start"
-          title="From zero to a reacting form in three steps"
-          subtitle="Follow the morning-coffee path: install, register, subscribe. Each snippet is production-safe and mirrors the real API surface."
+          title="From install to realtime UX in four moves"
+          subtitle="Choose the lane that matches your build cycle. Every snippet is production-safe and mirrors the real API surface."
           action={
             <a
               href="https://stackblitz.com/~/github/rezend/rezend-form"
@@ -306,6 +425,9 @@ export function HomePage() {
             </a>
           }
         >
+          <p className="text-sm text-foreground/65">
+            Start with the plain JS version, layer in TypeScript for typed validators, then subscribe only to the fields your UI cares about.
+          </p>
           <div className="grid gap-6 lg:grid-cols-2 xl:gap-8">
             {quickStartSteps.map((step, index) => (
               <GradientCard
@@ -327,10 +449,24 @@ export function HomePage() {
           <div className="mt-10">
             <LiveFormDemo />
           </div>
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+            <a
+              href="/examples"
+              className="rounded-full border border-white/10 px-4 py-2 text-sm font-medium text-foreground/70 transition hover:border-white/25 hover:text-foreground"
+            >
+              Browse integration recipes
+            </a>
+            <a
+              href="/performance"
+              className="rounded-full border border-white/10 px-4 py-2 text-sm font-medium text-foreground/70 transition hover:border-white/25 hover:text-foreground"
+            >
+              Open the performance playground
+            </a>
+          </div>
           <div className="mt-10">
             <GradientCard
               title="Keep server patches clean"
-              description="Reset initialValue before applying backend updates so dirty state only reflects user intent."
+              description="Reset the saved baseline before applying server updates so the form only flags true user edits."
             >
               <CodeBlock
                 variants={[
@@ -408,12 +544,12 @@ applyServerPatch("profile.name", "Grace Hopper");`
           id="core"
           eyebrow="Core ideas"
           title="Middleware keeps every mutation observable"
-          subtitle="Every write funnels through the same MutCtx signature, so policies like audits, batching, or guards sit in one place."
+          subtitle="Every write funnels through the same mutation context (MutCtx), so audits, batching, and guards live in one predictable lane."
         >
           <div className="glass-panel space-y-6 p-8">
             <div className="space-y-4">
               <p className="text-sm text-foreground/70">
-                A middleware receives a <code className="rounded-md bg-black/40 px-2 py-1 text-xs">MutCtx</code> ({"type"}, path, payload, epoch, now). Compose them to log, reject, or transform mutations before they touch the store.
+                Middleware always receives a <code className="rounded-md bg-black/40 px-2 py-1 text-xs">MutCtx</code> — short for mutation context. It is a plain object with the mutation type, field path, payload, epoch, and timestamp, so you can inspect or change activity before it hits the store.
               </p>
               <CodeBlock
                 code={`import type { Middleware } from "@form/core";
@@ -508,10 +644,40 @@ const store = createFormStore({
         </Section>
 
         <Section
+          id="enterprise"
+          eyebrow="Enterprise"
+          title="Enterprise safeguards without the ceremony"
+          subtitle="Bring Rezend Form through security review with built-in audit data, policy hooks, and a support partnership."
+          action={
+            <a
+              href="mailto:hello@rezend.dev?subject=Rezend%20Form%20Enterprise%20Review"
+              className="rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-foreground/80 transition hover:bg-white/20"
+            >
+              Book a walkthrough →
+            </a>
+          }
+        >
+          <div className="grid gap-6 md:grid-cols-3">
+            {enterpriseSignals.map((signal) => (
+              <GradientCard key={signal.title} title={signal.title} description={signal.description}>
+                <ul className="space-y-2 text-sm text-foreground/75">
+                  {signal.bullets.map((bullet) => (
+                    <li key={bullet} className="flex items-start gap-2">
+                      <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" />
+                      <span>{bullet}</span>
+                    </li>
+                  ))}
+                </ul>
+              </GradientCard>
+            ))}
+          </div>
+        </Section>
+
+        <Section
           id="advanced"
           eyebrow="Advanced"
           title="From solo builder to mission control"
-          subtitle="Layer use cases progressively. Each stage builds on top of the same primitives, so your mental model never resets."
+          subtitle="Layer capabilities progressively. The same primitives carry you from first launch to mission control."
         >
           <div className="grid gap-6 md:grid-cols-3">
             {advancedScenarios.map((scenario) => (
@@ -549,13 +715,27 @@ const store = createFormStore({
           title="Compare Rezend Form with other libraries"
           subtitle="See how Rezend Form stacks up against React Hook Form, Formik, Final Form, and React Zustand Form under identical workloads."
         >
-          <div className="space-y-6">
+          <div className="grid gap-6 md:grid-cols-3">
+            {benchmarkTakeaways.map((takeaway) => (
+              <GradientCard key={takeaway.title} title={takeaway.title} description={takeaway.description}>
+                <ul className="space-y-2 text-sm text-foreground/75">
+                  {takeaway.bullets.map((bullet) => (
+                    <li key={bullet} className="flex items-start gap-2">
+                      <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" />
+                      <span>{bullet}</span>
+                    </li>
+                  ))}
+                </ul>
+              </GradientCard>
+            ))}
+          </div>
+          <div className="mt-10 space-y-6">
             <div className="glass-panel space-y-4 px-6 py-6 lg:px-8">
               <p className="text-sm text-foreground/70">
-                The <code className="rounded-md bg-black/40 px-2 py-1 text-xs">compare-plus</code> harness boots JSDOM, mounts each library’s React integration, and drives it through scripted workloads. Tinybench reports operations per second (higher is better); every run uses Node v22.19.0 and the stock repo config (May 2025 snapshot).
+                The <code className="rounded-md bg-black/40 px-2 py-1 text-xs">compare-plus</code> script spins up a shared JSDOM environment, renders each library, and runs the same scripted workload. Tinybench reports operations per second (higher is better). Every run uses Node v22.19.0 and the stock repo config from May 2025.
               </p>
               <p className="text-sm text-foreground/65">
-                Each scenario isolates a real production pressure point: server bursts, per-keystroke feedback, or whole-form validation. Baseline variants represent the simplest drop-in usage, while best-practice variants apply the library’s recommended batching or reset patterns.
+                Each scenario focuses on a common stress test: bursty server updates, per-keystroke validation, or full-form checks. “Baseline” means the default setup. “Best practice” applies each library’s own recommended tuning.
               </p>
               <CodeBlock
                 variants={[

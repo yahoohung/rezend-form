@@ -10,7 +10,9 @@ interface NavLinkItem {
 const defaultLinks: readonly NavLinkItem[] = [
   { label: "Overview", to: "/#overview" },
   { label: "Quick Start", to: "/#quickstart" },
+  { label: "Teams", to: "/#teams" },
   { label: "Core Ideas", to: "/#core" },
+  { label: "Enterprise", to: "/#enterprise" },
   { label: "Advanced", to: "/#advanced" },
   { label: "Examples", to: "/examples" },
   { label: "Performance", to: "/performance" }
