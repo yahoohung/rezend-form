@@ -223,15 +223,6 @@ const personaTracks = [
       "Add simple rules to run validation, optimistic updates, or sync logic in one place.",
       "Use the bundled benchmarks to see performance before you ship."
     ]
-  },
-  {
-    title: "Platform & enterprise IT",
-    description: "Empower product squads while keeping policy, audit, and risk under control.",
-    bullets: [
-      "Change logs include who changed what, which field, and when.",
-      "Add policy checks, logging, or validation modules without touching feature code.",
-      "Deploy on your own stack or Vercel without extra runtime services."
-    ]
   }
 ];
 
@@ -268,38 +259,6 @@ const principles = [
   }
 ];
 
-const enterpriseSignals = [
-  {
-    title: "Audit-ready event stream",
-    description:
-      "Every change emits structured data you can forward to your logging or analytics tools right away.",
-    bullets: [
-      "Every change event includes who, what field, the new data, and the time.",
-      "Starter templates show how to mask, enrich, or block writes before they land.",
-      "Send those events to your existing data pipeline with only a few lines of code."
-    ]
-  },
-  {
-    title: "Operational guardrails",
-    description:
-      "Design for streaming workloads without sacrificing user intent or compliance.",
-    bullets: [
-      "Touched flags keep focused inputs safe from background updates.",
-      "Collaboration helpers only patch untouched fields, so teammates do not overwrite each other.",
-      "Baseline replay restores a form instantly without losing the change log."
-    ]
-  },
-  {
-    title: "Partner-level support",
-    description:
-      "Roadmap transparency and expert help for regulated teams and mission-critical flows.",
-    bullets: [
-      "Private onboarding sessions for architecture reviews and performance tuning.",
-      "Long-term support channel with coordinated releases and breakage alerts.",
-      "Regular security updates covering dependencies, patch timing, and SOC 2 progress."
-    ]
-  }
-];
 
 const advancedScenarios = [
   {
@@ -355,14 +314,7 @@ export function HomePage() {
       <TopNav />
       <Hero metrics={metrics}>
         <div className="space-y-2 text-sm text-foreground/65">
-          <p>Framework agnostic · MIT licensed · Zero runtime dependencies</p>
-          <p className="flex flex-wrap items-center gap-1">
-            <span>Need a deeper review?</span>
-            <a href="#enterprise" className="text-accent hover:text-accent/80">
-              Jump to the enterprise checklist
-            </a>
-            <span>.</span>
-          </p>
+          <p>Runs fast at any scale.</p>
         </div>
       </Hero>
 
@@ -640,36 +592,6 @@ const store = createFormStore({
 });`}
               />
             </div>
-          </div>
-        </Section>
-
-        <Section
-          id="enterprise"
-          eyebrow="Enterprise"
-          title="Enterprise safeguards without the ceremony"
-          subtitle="Bring Rezend Form through security review with built-in audit data, policy hooks, and a support partnership."
-          action={
-            <a
-              href="mailto:hello@rezend.dev?subject=Rezend%20Form%20Enterprise%20Review"
-              className="rounded-full bg-white/10 px-4 py-2 text-sm font-semibold text-foreground/80 transition hover:bg-white/20"
-            >
-              Book a walkthrough →
-            </a>
-          }
-        >
-          <div className="grid gap-6 md:grid-cols-3">
-            {enterpriseSignals.map((signal) => (
-              <GradientCard key={signal.title} title={signal.title} description={signal.description}>
-                <ul className="space-y-2 text-sm text-foreground/75">
-                  {signal.bullets.map((bullet) => (
-                    <li key={bullet} className="flex items-start gap-2">
-                      <span className="mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full bg-accent" />
-                      <span>{bullet}</span>
-                    </li>
-                  ))}
-                </ul>
-              </GradientCard>
-            ))}
           </div>
         </Section>
 
