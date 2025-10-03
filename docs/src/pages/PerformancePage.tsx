@@ -22,7 +22,6 @@ const SERVER_UPDATE_RATIO = 0.1;
 const SERVER_UPDATE_COUNT = Math.floor(TOTAL_FIELDS * SERVER_UPDATE_RATIO);
 const REGISTRATION_BATCH_SIZE = 600;
 const RANDOM_SAMPLE_SIZE = 6;
-const HIGHLIGHT_DURATION_MS = 500;
 
 const PINNED_FIELDS = [
   { label: "Top left", row: 0, col: 0 },
@@ -65,7 +64,6 @@ interface PerformanceContextValue {
   serverTickArrayRef: MutableRefObject<Uint32Array>;
   vizVersion: number;
   valueCacheRef: MutableRefObject<(string | number | null)[]>;
-  highlightBitmapRef: MutableRefObject<Uint8Array>;
   pendingCellUpdatesRef: MutableRefObject<Set<number>>;
   fps: number;
   editingIndicesRef: MutableRefObject<Set<number>>;
@@ -74,8 +72,6 @@ interface PerformanceContextValue {
   finishUserEdit(index: number): void;
   queueCellUpdate(index: number): void;
   scheduleViz: () => void;
-  highlightEnabled: boolean;
-  toggleHighlight(): void;
 }
 
 const PerformanceContext = createContext<PerformanceContextValue | null>(null);
@@ -89,7 +85,7 @@ function usePerformanceContext() {
 }
 
 const cellPath = (row: number, col: number) => `grid[${row}][${col}]`;
-const initialValueFor = (row: number, col: number) => row * TOTAL_COLS + col;
+const initialValueFor = (row: number, col: number) => TOTAL_FIELDS - 1 - (row * TOTAL_COLS + col);
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const generateRandomIndices = (count: number = RANDOM_SAMPLE_SIZE) => {
@@ -137,38 +133,40 @@ const scheduleIdle = (work: () => void) => {
 
 export function PerformancePage() {
   return (
-    <div className="min-h-screen bg-surface text-foreground">
+    <div className="performance-page">
       <TopNav />
-      <main className="mx-auto max-w-6xl px-6 pb-24 pt-16 space-y-16">
-        <header className="space-y-4">
-          <p className="text-xs uppercase tracking-[0.4em] text-foreground/50">Performance</p>
-          <h1 className="text-3xl font-semibold tracking-tight text-foreground md:text-4xl">
-            60 × 60 controlled fields under live server pressure
-          </h1>
-          <p className="max-w-3xl text-sm text-foreground/70 md:text-base">
-            This playground provisions 3,600 controlled fields and streams 360 server patches every second. Touch a cell,
-            type a value, and watch Rezend Form keep background updates respectful while dirty tracking stays accurate.
-          </p>
-        </header>
+      <main className="performance-main">
+        <div className="performance-gradient performance-gradient--primary" aria-hidden />
+        <div className="performance-gradient performance-gradient--secondary" aria-hidden />
+        <section className="performance-shell">
+          <header className="performance-hero">
+            <p className="performance-eyebrow">Performance</p>
+            <h1 className="performance-title">60 × 60 controlled fields under live server pressure</h1>
+            <p className="performance-subtitle">
+              This playground provisions 3,600 controlled fields and streams 360 server patches every second. Touch a cell, type a value,
+              and watch Rezend Form keep background updates respectful while dirty tracking stays accurate.
+            </p>
+          </header>
 
-        <PerformancePlayground />
+          <PerformancePlayground />
 
-        <div className="grid gap-6 md:grid-cols-3">
-          <GradientCard
-            title="Touched fields stay user-owned"
-            description="markTouched flips a fast boolean. Server batches read it before every patch, so focused inputs never lose keystrokes."
-          />
-          <GradientCard
-            title="Dirty means intentional diffs"
-            description="Dirty flips only when the value diverges from its baseline; blur without edits keeps it false for confident server merges."
-          />
-          <GradientCard
-            title="Reset restores baselines"
-            description="Recreate the store in-place to wipe touched/dirty flags and roll values back to the initial 60 × 60 seed instantly."
-          />
-        </div>
+          <div className="performance-pillars">
+            <GradientCard
+              title="Touched fields stay user-owned"
+              description="markTouched flips a fast boolean. Server batches read it before every patch, so focused inputs never lose keystrokes."
+            />
+            <GradientCard
+              title="Dirty means intentional diffs"
+              description="Dirty flips only when the value diverges from its baseline; blur without edits keeps it false for confident server merges."
+            />
+            <GradientCard
+              title="Reset restores baselines"
+              description="Recreate the store in-place to wipe touched/dirty flags and roll values back to the initial 60 × 60 seed instantly."
+            />
+          </div>
+        </section>
       </main>
-      <footer className="border-t border-white/10 bg-surface/60 py-10 text-center text-sm text-foreground/60">
+      <footer className="performance-footer">
         <p>© {new Date().getFullYear()} Rezend Form</p>
       </footer>
     </div>
@@ -185,9 +183,6 @@ function PerformancePlayground() {
   const dirtyBitmapRef = useRef(new Uint8Array(TOTAL_FIELDS));
   const serverTickArrayRef = useRef(new Uint32Array(TOTAL_FIELDS));
   const valueCacheRef = useRef<(string | number | null)[]>(new Array(TOTAL_FIELDS).fill(null));
-  const highlightBitmapRef = useRef(new Uint8Array(TOTAL_FIELDS));
-  const highlightExpiryRef = useRef<Map<number, number>>(new Map());
-  const highlightSweepHandleRef = useRef<number | null>(null);
   const pathIndexCacheRef = useRef(new Map<string, number>());
   const editingIndicesRef = useRef<Set<number>>(new Set());
   const pendingCellUpdatesRef = useRef<Set<number>>(new Set());
@@ -196,7 +191,6 @@ function PerformancePlayground() {
   const fpsFrameRef = useRef<number | null>(null);
   const fpsLastSampleRef = useRef(typeof performance !== "undefined" ? performance.now() : 0);
   const fpsCounterRef = useRef(0);
-  const [highlightEnabled, setHighlightEnabled] = useState(true);
 
   const queueCellUpdate = useCallback((index: number) => {
     pendingCellUpdatesRef.current.add(index);
@@ -211,50 +205,6 @@ function PerformancePlayground() {
       setVizVersion((version) => version + 1);
     });
   }, []);
-
-  const runHighlightSweep = useCallback(() => {
-    highlightSweepHandleRef.current = null;
-    const now = performance.now();
-    let changed = false;
-    const expiries = highlightExpiryRef.current;
-    for (const [index, expiry] of Array.from(expiries.entries())) {
-      if (expiry <= now) {
-        expiries.delete(index);
-        if (highlightBitmapRef.current[index] !== 0) {
-          highlightBitmapRef.current[index] = 0;
-          queueCellUpdate(index);
-          changed = true;
-        }
-      }
-    }
-    if (changed) {
-      scheduleViz();
-    }
-    if (expiries.size > 0) {
-      highlightSweepHandleRef.current = window.setTimeout(runHighlightSweep, 160);
-    }
-  }, [queueCellUpdate, scheduleViz]);
-
-  const scheduleHighlightSweep = useCallback(() => {
-    if (highlightSweepHandleRef.current != null) {
-      return;
-    }
-    highlightSweepHandleRef.current = window.setTimeout(runHighlightSweep, 160);
-  }, [runHighlightSweep]);
-
-  const markHighlight = useCallback(
-    (index: number) => {
-      queueCellUpdate(index);
-      scheduleViz();
-      if (!highlightEnabled) {
-        return;
-      }
-      highlightBitmapRef.current[index] = 1;
-      highlightExpiryRef.current.set(index, performance.now() + HIGHLIGHT_DURATION_MS);
-      scheduleHighlightSweep();
-    },
-    [highlightEnabled, queueCellUpdate, scheduleHighlightSweep, scheduleViz]
-  );
 
   const indexFromPath = useCallback(
     (path: string) => {
@@ -303,8 +253,6 @@ function PerformancePlayground() {
             // Do not reset touched state on register, as server patches use this.
             // touchedBitmapRef.current[index] = 0;
             dirtyBitmapRef.current[index] = 0;
-            highlightBitmapRef.current[index] = 0;
-            highlightExpiryRef.current.delete(index);
             const initial = (payload as { initialValue?: unknown } | undefined)?.initialValue;
             if (typeof initial === "number" || typeof initial === "string") {
               valueCacheRef.current[index] = initial;
@@ -361,7 +309,6 @@ function PerformancePlayground() {
             }
             queueCellUpdate(index);
             scheduleViz();
-            markHighlight(index);
             return undefined;
           }
           return undefined;
@@ -372,7 +319,7 @@ function PerformancePlayground() {
         };
       }
     } as const;
-  }, [baselineRef, dirtyBitmapRef, highlightBitmapRef, highlightExpiryRef, indexFromPath, markHighlight, queueCellUpdate, scheduleViz, touchedBitmapRef, valueCacheRef]);
+  }, [baselineRef, dirtyBitmapRef, indexFromPath, queueCellUpdate, scheduleViz, touchedBitmapRef, valueCacheRef]);
 
   const [store, setStore] = useState<FormStore>(() => createFormStore({ plugins: [trackingPlugin] }));
   const [ready, setReady] = useState(false);
@@ -383,41 +330,6 @@ function PerformancePlayground() {
   const [fps, setFps] = useState(0);
 
   useEffect(() => () => store.destroy(), [store]);
-
-  useEffect(() => {
-    return () => {
-      if (highlightSweepHandleRef.current != null) {
-        window.clearTimeout(highlightSweepHandleRef.current);
-        highlightSweepHandleRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (highlightEnabled) {
-      return;
-    }
-
-    if (highlightSweepHandleRef.current != null) {
-      window.clearTimeout(highlightSweepHandleRef.current);
-      highlightSweepHandleRef.current = null;
-    }
-
-    const highlights = highlightBitmapRef.current;
-    let changed = false;
-    for (let index = 0; index < highlights.length; index += 1) {
-      if (highlights[index] === 1) {
-        highlights[index] = 0;
-        queueCellUpdate(index);
-        changed = true;
-      }
-    }
-    highlightExpiryRef.current.clear();
-
-    if (changed) {
-      scheduleViz();
-    }
-  }, [highlightEnabled, highlightBitmapRef, queueCellUpdate, scheduleViz]);
 
   useEffect(() => {
     const sample = (now: number) => {
@@ -455,12 +367,6 @@ function PerformancePlayground() {
     touchedBitmapRef.current.fill(0);
     dirtyBitmapRef.current.fill(0);
     serverTickArrayRef.current.fill(0);
-    highlightBitmapRef.current.fill(0);
-    highlightExpiryRef.current.clear();
-    if (highlightSweepHandleRef.current != null) {
-      window.clearTimeout(highlightSweepHandleRef.current);
-      highlightSweepHandleRef.current = null;
-    }
     pathIndexCacheRef.current.clear();
     valueCacheRef.current.fill(null);
     editingIndicesRef.current.clear();
@@ -587,7 +493,6 @@ function PerformancePlayground() {
         scheduleViz();
         store.setControlledValue(path, nextValue);
         store.register(path, { mode: "controlled", initialValue: nextValue });
-        markHighlight(index);
         applied += 1;
       }
 
@@ -610,14 +515,10 @@ function PerformancePlayground() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [autoPatch, baselineRef, markHighlight, queueCellUpdate, ready, scheduleViz, serverTickArrayRef, serverTickMapRef, skippedDirtyRef, skippedTouchedRef, store, touchedBitmapRef]);
+  }, [autoPatch, baselineRef, queueCellUpdate, ready, scheduleViz, serverTickArrayRef, serverTickMapRef, skippedDirtyRef, skippedTouchedRef, store, touchedBitmapRef]);
 
   const handleToggleAuto = useCallback(() => {
     setAutoPatch((prev) => !prev);
-  }, []);
-
-  const handleToggleHighlight = useCallback(() => {
-    setHighlightEnabled((prev) => !prev);
   }, []);
 
   const handleReset = useCallback(() => {
@@ -633,12 +534,6 @@ function PerformancePlayground() {
     touchedBitmapRef.current.fill(0);
     dirtyBitmapRef.current.fill(0);
     serverTickArrayRef.current.fill(0);
-    highlightBitmapRef.current.fill(0);
-    highlightExpiryRef.current.clear();
-    if (highlightSweepHandleRef.current != null) {
-      window.clearTimeout(highlightSweepHandleRef.current);
-      highlightSweepHandleRef.current = null;
-    }
     pathIndexCacheRef.current.clear();
     valueCacheRef.current.fill(null);
     editingIndicesRef.current.clear();
@@ -653,7 +548,7 @@ function PerformancePlayground() {
       previous.destroy();
       return createFormStore({ plugins: [trackingPlugin] });
     });
-  }, [baselineRef, dirtyBitmapRef, highlightBitmapRef, highlightExpiryRef, pathIndexCacheRef, scheduleViz, serverTickArrayRef, serverTickMapRef, skippedDirtyRef, skippedTouchedRef, trackingPlugin, touchedBitmapRef, valueCacheRef]);
+  }, [baselineRef, dirtyBitmapRef, pathIndexCacheRef, scheduleViz, serverTickArrayRef, serverTickMapRef, skippedDirtyRef, skippedTouchedRef, trackingPlugin, touchedBitmapRef, valueCacheRef]);
 
   const progressPercent = Math.min(100, Math.round((registeredCount / TOTAL_FIELDS) * 100));
   const contextValue = useMemo(
@@ -671,7 +566,6 @@ function PerformancePlayground() {
       serverTickArrayRef,
       vizVersion,
       valueCacheRef,
-      highlightBitmapRef,
       pendingCellUpdatesRef,
       scheduleViz,
       fps,
@@ -679,61 +573,45 @@ function PerformancePlayground() {
       resolveIndex: indexFromPath,
       beginUserEdit: startUserEdit,
       finishUserEdit,
-      queueCellUpdate,
-      highlightEnabled,
-      toggleHighlight: handleToggleHighlight
+      queueCellUpdate
     }),
-    [baselineRef, dirtyBitmapRef, editingIndicesRef, finishUserEdit, fps, handleToggleHighlight, highlightBitmapRef, highlightEnabled, indexFromPath, pendingCellUpdatesRef, queueCellUpdate, ready, scheduleViz, serverPulse, serverTickArrayRef, serverTickMapRef, skippedDirtyRef, skippedTouchedRef, startUserEdit, stats, store, touchedBitmapRef, valueCacheRef, vizVersion]
+    [baselineRef, dirtyBitmapRef, editingIndicesRef, finishUserEdit, fps, indexFromPath, pendingCellUpdatesRef, queueCellUpdate, ready, scheduleViz, serverPulse, serverTickArrayRef, serverTickMapRef, skippedDirtyRef, skippedTouchedRef, startUserEdit, stats, store, touchedBitmapRef, valueCacheRef, vizVersion]
   );
 
   return (
     <PerformanceContext.Provider value={contextValue}>
-      <div className="glass-panel relative overflow-hidden p-8">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(56,189,248,0.18),transparent_55%),radial-gradient(circle_at_bottom,_rgba(34,197,94,0.16),transparent_65%)] opacity-70" />
-        <div className="relative space-y-8">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-            <div className="space-y-2">
-              <h2 className="text-2xl font-semibold text-foreground">High-density playground</h2>
-              <p className="text-sm text-foreground/70">
+      <div className="performance-panel">
+        <div className="performance-panel-body">
+          <div className="performance-summary">
+            <div className="performance-summary-copy">
+              <h2 className="performance-summary-title">High-density playground</h2>
+              <p className="performance-summary-subtitle">
                 Rezend Form keeps 3,600 controlled cells reactive without blowing through renders. 360 untouched cells accept new
                 baselines every second; touched or dirty paths stay frozen for the user.
               </p>
             </div>
-            <div className="flex flex-wrap gap-3">
+            <div className="performance-controls">
               <button
                 type="button"
                 onClick={handleToggleAuto}
                 disabled={!ready}
-                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
-                  autoPatch
-                    ? "border-white/15 bg-white/10 text-foreground/80 hover:border-accent/50 hover:text-foreground"
-                    : "border-accent/40 bg-accent/20 text-foreground hover:border-accent/60 hover:bg-accent/30"
-                } ${!ready ? "opacity-50" : ""}`}
+                className={`performance-button ${
+                  autoPatch ? "performance-button--outline" : "performance-button--accent"
+                }${!ready ? " performance-button--disabled" : ""}`}
               >
                 {autoPatch ? "Pause server patches" : "Resume server patches"}
               </button>
               <button
                 type="button"
-                onClick={handleToggleHighlight}
-                className={`rounded-full border px-4 py-2 text-sm font-semibold transition ${
-                  highlightEnabled
-                    ? "border-blue-400/60 bg-blue-500/20 text-foreground"
-                    : "border-white/15 bg-white/10 text-foreground/70 hover:text-foreground"
-                }`}
-              >
-                {highlightEnabled ? "Disable highlights" : "Enable highlights"}
-              </button>
-              <button
-                type="button"
                 onClick={handleReset}
-                className="rounded-full border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-foreground/70 transition hover:border-accent/50 hover:text-foreground"
+                className="performance-button performance-button--ghost"
               >
                 Reset grid
               </button>
             </div>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="performance-metrics">
             <MetricTile
               label="Fields registered"
               value={`${numberFormatter.format(registeredCount)} / ${numberFormatter.format(TOTAL_FIELDS)}`}
@@ -757,34 +635,31 @@ function PerformancePlayground() {
           </div>
 
           {!ready && (
-            <div className="h-2 w-full overflow-hidden rounded-full border border-white/10 bg-white/5">
-              <div
-                className="h-full bg-gradient-to-r from-sky-400/70 to-emerald-400/70 transition-all"
-                style={{ width: `${progressPercent}%` }}
-              />
+            <div className="performance-progress" aria-hidden>
+              <div className="performance-progress-bar" style={{ width: `${progressPercent}%` }} />
             </div>
           )}
 
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <p className="text-xs uppercase tracking-[0.3em] text-foreground/50">Full input grid</p>
-              <p className="text-sm text-foreground/65">
+          <div className="performance-section">
+            <div>
+              <p className="performance-section-eyebrow">Full input grid</p>
+              <p className="performance-section-copy">
                 The 60 × 60 matrix below renders every controlled input at 1× scale. Scroll the container to explore; hovering any cell
-                pins a zoomed preview, and updates still fire the half-second highlight pulse.
+                pins a zoomed preview for quick inspection.
               </p>
             </div>
             <GridMiniature />
           </div>
 
-          <div className="space-y-3">
-            <p className="text-xs uppercase tracking-[0.3em] text-foreground/50">Pinned cells</p>
-            <p className="text-sm text-foreground/65">
+          <div className="performance-section">
+            <p className="performance-section-eyebrow">Pinned cells</p>
+            <p className="performance-section-copy">
               Pick any coordinates (1-indexed). Dirty or touched inputs will resist server writes until you clear them; untouched
               cells accept the next baseline immediately.
             </p>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="performance-field-grid">
             {PINNED_FIELDS.map((field) => (
               <FieldPreview key={field.label} label={field.label} defaultRow={field.row} defaultCol={field.col} />
             ))}
@@ -954,33 +829,33 @@ function FieldPreview({ label, defaultRow, defaultCol }: FieldPreviewProps) {
   }
 
   return (
-    <div className="rounded-[22px] border border-white/10 bg-white/5 p-5 shadow-lg shadow-black/20 backdrop-blur">
-      <div className="flex items-center justify-between gap-3">
+    <div className="performance-field-card">
+      <div className="performance-field-header">
         <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-foreground/50">{label}</p>
-          <p className="font-mono text-xs text-foreground/60">{path}</p>
+          <p className="performance-card-eyebrow">{label}</p>
+          <p className="performance-card-path">{path}</p>
         </div>
-        <div className="flex gap-2">
-          <label className="flex flex-col text-[11px] text-foreground/50">
-            Row
+        <div className="performance-field-coords">
+          <label className="performance-field-control">
+            <span>Row</span>
             <input
               type="number"
               min={1}
               max={TOTAL_ROWS}
               value={rowInput}
               onChange={handleRowChange}
-              className="mt-1 w-20 rounded-lg border border-white/15 bg-white/10 px-2 py-1 text-xs text-foreground"
+              className="performance-field-number"
             />
           </label>
-          <label className="flex flex-col text-[11px] text-foreground/50">
-            Col
+          <label className="performance-field-control">
+            <span>Col</span>
             <input
               type="number"
               min={1}
               max={TOTAL_COLS}
               value={colInput}
               onChange={handleColChange}
-              className="mt-1 w-20 rounded-lg border border-white/15 bg-white/10 px-2 py-1 text-xs text-foreground"
+              className="performance-field-number"
             />
           </label>
         </div>
@@ -992,31 +867,27 @@ function FieldPreview({ label, defaultRow, defaultCol }: FieldPreviewProps) {
         onChange={handleChange}
         onBlur={handleBlur}
         disabled={!ready}
-        className="mt-4 w-full rounded-[18px] border border-white/15 bg-white/10 px-4 py-3 text-sm text-foreground shadow-inner shadow-black/10 transition focus:border-accent/60 focus:outline-none focus:ring focus:ring-accent/30 disabled:cursor-not-allowed disabled:opacity-50"
+        className="performance-field-input"
         placeholder={ready ? "Type to override server patches" : "Registering fields…"}
       />
 
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="performance-badge-row">
         <StatusBadge label="Touched" active={touched} />
         <StatusBadge label="Dirty" active={dirty} tone="emerald" />
         <StatusBadge label="Server skipped" active={skipState.touched || skipState.dirty} tone="rose" />
       </div>
 
-      <p className="mt-3 text-xs text-foreground/60">{statusMessage}</p>
+      <p className="performance-field-status">{statusMessage}</p>
 
-      <div className="mt-4 flex items-center justify-between text-[11px] text-foreground/50">
+      <div className="performance-field-meta">
         <span>Baseline: {baseline !== undefined ? baseline : "—"}</span>
-        <button
-          type="button"
-          onClick={handleFieldReset}
-          className="text-foreground/70 hover:text-foreground"
-        >
+        <button type="button" onClick={handleFieldReset} className="performance-field-reset">
           Reset field
         </button>
       </div>
 
       {lastServerTick != null && (
-        <p className="mt-2 text-[11px] text-foreground/45">
+        <p className="performance-field-note">
           {ticksSincePatch === 0 ? "Aligned with latest server batch." : `${ticksSincePatch} tick${ticksSincePatch === 1 ? "" : "s"} since last server patch.`}
         </p>
       )}
@@ -1029,13 +900,11 @@ function GridMiniature() {
     ready,
     vizVersion,
     valueCacheRef,
-    highlightBitmapRef,
     touchedBitmapRef,
     dirtyBitmapRef,
     baselineRef,
     pendingCellUpdatesRef,
     queueCellUpdate,
-    scheduleViz,
     fps,
     store,
     beginUserEdit,
@@ -1045,7 +914,6 @@ function GridMiniature() {
   const miniatureRef = useRef<HTMLDivElement | null>(null);
   const cellRefs = useRef<(HTMLInputElement | null)[]>(new Array(TOTAL_FIELDS).fill(null));
   const previousValuesRef = useRef<string[]>(new Array(TOTAL_FIELDS).fill(""));
-  const previousHighlightsRef = useRef<Uint8Array>(new Uint8Array(TOTAL_FIELDS));
   const [inView, setInView] = useState(false);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
@@ -1078,9 +946,7 @@ function GridMiniature() {
     }
     const cells = cellRefs.current;
     const previousValues = previousValuesRef.current;
-    const previousHighlights = previousHighlightsRef.current;
     const values = valueCacheRef.current;
-    const highlights = highlightBitmapRef.current;
     const touched = touchedBitmapRef.current;
     const dirty = dirtyBitmapRef.current;
 
@@ -1098,16 +964,6 @@ function GridMiniature() {
       if (previousValues[index] !== nextValue) {
         cell.value = nextValue;
         previousValues[index] = nextValue;
-      }
-
-      const nextHighlight = highlights[index] === 1 ? 1 : 0;
-      if (previousHighlights[index] !== nextHighlight) {
-        if (nextHighlight === 1) {
-          cell.classList.add("grid-miniature-input--highlight");
-        } else {
-          cell.classList.remove("grid-miniature-input--highlight");
-        }
-        previousHighlights[index] = nextHighlight;
       }
 
       const isTouched = touched[index] === 1;
@@ -1130,7 +986,7 @@ function GridMiniature() {
         }
       }
     }
-  }, [dirtyBitmapRef, editingIndicesRef, finishUserEdit, highlightBitmapRef, pendingCellUpdatesRef, touchedBitmapRef, valueCacheRef]);
+  }, [dirtyBitmapRef, editingIndicesRef, finishUserEdit, pendingCellUpdatesRef, touchedBitmapRef, valueCacheRef]);
 
   useEffect(() => {
     syncCells();
@@ -1299,15 +1155,13 @@ function GridMiniature() {
     const row = Math.floor(index / TOTAL_COLS) + 1;
     const col = (index % TOTAL_COLS) + 1;
     const formatted = toInputValue(value);
-    const isHighlighted = highlightBitmapRef.current[index] === 1;
     return {
       index,
       row,
       col,
-      value: formatted,
-      isHighlighted
+      value: formatted
     };
-  }, [highlightBitmapRef, hoveredIndex, valueCacheRef, vizVersion]);
+  }, [hoveredIndex, valueCacheRef, vizVersion]);
 
   return (
     <div ref={miniatureRef} className="grid-miniature">
@@ -1346,15 +1200,7 @@ function GridMiniature() {
           <p className="grid-miniature-preview-meta">
             Row {hoveredDetails.row} • Col {hoveredDetails.col}
           </p>
-          <input
-            readOnly
-            value={hoveredDetails.value}
-            className={
-              hoveredDetails.isHighlighted
-                ? "grid-miniature-preview-input grid-miniature-preview-input--highlight"
-                : "grid-miniature-preview-input"
-            }
-          />
+          <input readOnly value={hoveredDetails.value} className="grid-miniature-preview-input" />
         </div>
       )}
     </div>
@@ -1376,23 +1222,19 @@ function RandomFieldShowcase() {
   }, []);
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <div className="performance-random">
+      <div className="performance-random-header">
         <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-foreground/50">Random sampler</p>
-          <p className="text-sm text-foreground/65">
+          <p className="performance-section-eyebrow">Random sampler</p>
+          <p className="performance-section-copy">
             Shuffle six grid coordinates to poke around. Each tile is live, so type to mark dirty or blur to reset touched state.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={shuffle}
-          className="self-start rounded-full border border-white/15 bg-white/10 px-4 py-2 text-sm font-semibold text-foreground/70 transition hover:border-accent/50 hover:text-foreground"
-        >
+        <button type="button" onClick={shuffle} className="performance-button performance-button--ghost">
           Shuffle selection
         </button>
       </div>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div className="performance-field-grid">
         {samples.map((index, idx) => {
           const { row, col } = indexToCoordinates(index);
           return (
@@ -1416,38 +1258,13 @@ interface StatusBadgeProps {
 }
 
 function StatusBadge({ label, active, tone = "sky" }: StatusBadgeProps) {
-  const palette = {
-    sky: {
-      activeBg: "bg-sky-400/20",
-      activeText: "text-sky-200",
-      inactiveBg: "bg-white/10",
-      inactiveText: "text-foreground/40"
-    },
-    emerald: {
-      activeBg: "bg-emerald-400/20",
-      activeText: "text-emerald-200",
-      inactiveBg: "bg-white/10",
-      inactiveText: "text-foreground/40"
-    },
-    rose: {
-      activeBg: "bg-rose-400/20",
-      activeText: "text-rose-200",
-      inactiveBg: "bg-white/10",
-      inactiveText: "text-foreground/40"
-    }
+  const activeTone = {
+    sky: "performance-badge--sky",
+    emerald: "performance-badge--emerald",
+    rose: "performance-badge--rose"
   } as const;
 
-  const colors = palette[tone];
-
-  return (
-    <span
-      className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-        active ? `${colors.activeBg} ${colors.activeText}` : `${colors.inactiveBg} ${colors.inactiveText}`
-      }`}
-    >
-      {label}
-    </span>
-  );
+  return <span className={`performance-badge ${active ? activeTone[tone] : "performance-badge--inactive"}`}>{label}</span>;
 }
 
 interface MetricTileProps {
@@ -1458,10 +1275,10 @@ interface MetricTileProps {
 
 function MetricTile({ label, value, helper }: MetricTileProps) {
   return (
-    <div className="rounded-[20px] border border-white/10 bg-white/5 p-4 shadow-inner shadow-black/10">
-      <p className="text-[11px] uppercase tracking-[0.3em] text-foreground/45">{label}</p>
-      <p className="mt-2 text-lg font-semibold text-foreground">{value}</p>
-      {helper && <p className="mt-1 text-xs text-foreground/60">{helper}</p>}
+    <div className="performance-metric">
+      <p className="performance-metric-label">{label}</p>
+      <p className="performance-metric-value">{value}</p>
+      {helper && <p className="performance-metric-helper">{helper}</p>}
     </div>
   );
 }

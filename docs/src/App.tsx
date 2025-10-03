@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { HomePage } from "./pages/HomePage";
 import { PerformancePage } from "./pages/PerformancePage";
+import { ExamplesPage } from "./pages/ExamplesPage";
 
 function ScrollManager() {
   const { pathname, hash } = useLocation();
@@ -37,6 +38,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/performance" element={<PerformancePage />} />
+        <Route path="/examples/*" element={<ExamplesPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

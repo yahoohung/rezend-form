@@ -12,6 +12,7 @@ const defaultLinks: readonly NavLinkItem[] = [
   { label: "Quick Start", to: "/#quickstart" },
   { label: "Core Ideas", to: "/#core" },
   { label: "Advanced", to: "/#advanced" },
+  { label: "Examples", to: "/examples" },
   { label: "Performance", to: "/performance" }
 ];
 
@@ -48,10 +49,15 @@ export function TopNav({ links = defaultLinks }: TopNavProps) {
 
     const normalised = link.to.startsWith("/") ? link.to : `/${link.to}`;
     let isActive = false;
-    if (normalised === "/performance") {
-      isActive = location.pathname === "/performance";
-    } else if (normalised.startsWith("/#")) {
+    if (normalised.startsWith("/#")) {
       isActive = activeKey === normalised;
+    } else if (normalised === "/") {
+      isActive = location.pathname === "/";
+    } else {
+      const matchPath = normalised.replace(/\/$/, "");
+      isActive =
+        location.pathname === matchPath ||
+        location.pathname.startsWith(`${matchPath}/`);
     }
 
     return (

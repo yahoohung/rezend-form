@@ -93,8 +93,17 @@ const DimensionControl = ({
   };
 
   return (
-    <Box width={{ base: 'full', md: '280px' }}>
-      <Text fontWeight="semibold" mb={1}>
+    <Box
+      width={{ base: 'full', md: '280px' }}
+      bg="rgba(15, 23, 42, 0.78)"
+      borderWidth="1px"
+      borderColor="whiteAlpha.300"
+      borderRadius="xl"
+      p={5}
+      boxShadow="0 22px 48px rgba(2, 6, 23, 0.5)"
+      color="whiteAlpha.900"
+    >
+      <Text fontWeight="semibold" mb={2} color="whiteAlpha.900">
         {label}: {value}
       </Text>
       <chakra.input
@@ -104,15 +113,20 @@ const DimensionControl = ({
         max={MAX_DIMENSION}
         value={value}
         onChange={handleRangeChange}
+        color="accent"
       />
       <chakra.input
         type="number"
         width="100%"
-        mt={2}
+        mt={3}
         min={MIN_DIMENSION}
         max={MAX_DIMENSION}
         value={value}
         onChange={handleNumberChange}
+        bg="whiteAlpha.100"
+        borderColor="whiteAlpha.400"
+        color="whiteAlpha.900"
+        _focus={{ borderColor: 'accent', boxShadow: '0 0 0 1px rgba(56, 189, 248, 0.45)' }}
       />
     </Box>
   );
@@ -354,20 +368,32 @@ const PerformanceFormComponent = ({
             startTransition(() => setColCount(val));
           }}
         />
-        <Box flex="1" minWidth="220px">
-          <Text fontWeight="semibold">Grid Summary</Text>
-          <Text fontSize="sm" color="gray.600">
+        <Box
+          flex="1"
+          minWidth="220px"
+          bg="rgba(15, 23, 42, 0.78)"
+          borderWidth="1px"
+          borderColor="whiteAlpha.300"
+          borderRadius="xl"
+          p={5}
+          boxShadow="0 22px 48px rgba(2, 6, 23, 0.5)"
+          color="whiteAlpha.900"
+        >
+          <Text fontWeight="semibold" mb={2} color="whiteAlpha.900">
+            Grid Summary
+          </Text>
+          <Text fontSize="sm" color="whiteAlpha.800">
             Initial render ({rowCount} × {colCount} = {totalCells} cells):{' '}
             {renderTime.toFixed(2)}ms
           </Text>
-          <Text fontSize="sm" color="gray.600">
+          <Text fontSize="sm" color="whiteAlpha.800">
             Updates observed: {metrics.totalUpdates}
           </Text>
-          <Text fontSize="sm" color="gray.600">
+          <Text fontSize="sm" color="whiteAlpha.800">
             Delta since previous update:{' '}
             {metrics.lastDelta !== null ? `${metrics.lastDelta.toFixed(2)}ms` : '—'}
           </Text>
-          <Text fontSize="sm" color="gray.600">
+          <Text fontSize="sm" color="whiteAlpha.800">
             FPS (last second): {fps.toFixed(1)}
           </Text>
           <Box height="60px" mt={3}>
